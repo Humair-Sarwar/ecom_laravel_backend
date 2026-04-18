@@ -17,7 +17,7 @@ class MediaController extends Controller
         $to = min($medias->currentPage() * $medias->perPage(), $medias->total());
         return response()->json([
             'status' => true,
-            'message' => 'Brand list retrieved successfully',
+            'message' => 'Media list retrieved successfully',
             'data' => $medias->items(),
             'pagination' => [
                 'current_page' => $medias->currentPage(),
@@ -61,7 +61,7 @@ class MediaController extends Controller
         ]);
         $uploadedFiles = [];
 
-foreach ($request->file('images') as $file) {
+    foreach ($request->file('images') as $file) {
 
     $fileName = time() . '_' . uniqid() . '_' . $file->getClientOriginalName();
 

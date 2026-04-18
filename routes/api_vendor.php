@@ -8,16 +8,19 @@ use App\Http\Controllers\Vendor\ProductController;
 use App\Http\Controllers\Vendor\TermController;
 use Illuminate\Support\Facades\Route;
 
-Route::prefix('vendor')->middleware('auth:sanctum')->group(function (){
+Route::prefix('vendor')->middleware(['auth:sanctum', 'user_type:2'])->group(function (){
 
     // Brand Routes
-    Route::get('/brands', [BrandController::class, 'index']);
-    Route::post('/brands', [BrandController::class, 'addNewBrand']);
-    Route::get('/brand/{id}', [BrandController::class, 'editBrand']);
-    Route::put('/brand/{id}', [BrandController::class, 'updateBrand']);
-    Route::delete('/brand/{id}', [BrandController::class, 'deleteBrand']);
-    Route::delete('/brands', [BrandController::class, 'DeleteSelectedBrands']);
-    Route::get('/brands/panel', [BrandController::class, 'brands']);
+    Route::controller(BrandController::class)->group(function () {
+        Route::get('/brands', 'index');
+        Route::post('/brands', 'addNewBrand');
+        Route::get('/brand/{id}', 'editBrand');
+        Route::put('/brand/{id}', 'updateBrand');
+        Route::delete('/brand/{id}', 'deleteBrand');
+        Route::delete('/brands', 'DeleteSelectedBrands');
+        Route::get('/brands/panel', 'brands');
+        Route::put('/brand/status/update', 'brandStatusUpdate');
+    });
 
     // Category Routes
     Route::get('/categories', [CategoryController::class, 'index']);

@@ -11,7 +11,14 @@ use Illuminate\Validation\Rule;
 class CategoryController extends Controller
 {
     public function index(Request $request){
-        $categories = Category::where('business_id', auth()->user()->id)->where('purpose', 1)->where('is_deleted', false)->where('level', 0)->with(['children', 'media', 'coverMedia'])->get();
+        $categories = Category::where('business_id', auth()->user()->id)->where('is_active_for_buy', 1)->where('is_deleted', false)->where('level', 0)->with([
+        'media',
+        'coverMedia',
+        'children' => function ($query) {
+            $query->where('is_active_for_buy', 1)
+                  ->where('is_deleted', false);
+        }
+    ])->get();
         return response()->json([
             'status' => true,
             'message' => 'Categories retrieved successfully!',
@@ -59,7 +66,7 @@ class CategoryController extends Controller
             'meta_description' => $request->meta_description,
             'page_description' => $request->page_description,
             'business_id' => auth()->id(),
-            'purpose' => $request->purpose ?? 1,
+            'is_active_for_buy' => $request->is_active_for_buy ?? 1,
             'is_listing_switch_in_buy' => $request->is_listing_switch_in_buy ?? 1,
             'listing_design' => $request->listing_design ?? 1,
         ];
