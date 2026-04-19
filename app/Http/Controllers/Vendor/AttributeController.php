@@ -42,7 +42,7 @@ class AttributeController extends Controller
             'title' => 'required|string|min:3|max:300',
             'sub_title' => 'nullable|string',
             'design' => 'required|integer',
-            'purpose' => 'required|integer',
+            'is_active_for_buy' => 'required',
             'category_ids' => 'required',
             'image_id' => 'nullable|string'
         ]);
@@ -55,9 +55,11 @@ class AttributeController extends Controller
         }
         $attribute = Attribute::create([
             'title' => $request->title,
+            'sub_title' => $request->sub_title,
+            'description' => $request->description,
             'image_id' => $request->image_id,
             'design' => $request->design,
-            'purpose' => $request->purpose,
+            'is_active_for_buy' => $request->is_active_for_buy ? 1 : 0,
             'business_id' => auth()->user()->id,
             'attribute_slug' => $request->title,
         ]);
@@ -113,7 +115,7 @@ class AttributeController extends Controller
 
     public function updateAttribute(Request $request)
 {
-    $attribute = Attribute::where('business_id', auth()->id())
+    $attribute = Attribute::where('business_id', auth()->id())->where('id', $request->id)
         ->where('id', $request->id)
         ->first();
 
@@ -124,12 +126,14 @@ class AttributeController extends Controller
         ], 404);
     }
 
-    $attribute->update(['title' => $request->title, 'image_id' => $request->image_id,
-    'sub_title' => $request->sub_title,
-    'description' => $request->description,
-    'design' => $request->design,
-    'purpose' => $request->purpose,
-    'attribute_slug' => $request->title]);
+    $attribute->update(['title' => $request->title,
+            'sub_title' => $request->sub_title,
+            'description' => $request->description,
+            'image_id' => $request->image_id,
+            'design' => $request->design,
+            'is_active_for_buy' => $request->is_active_for_buy ? 1 : 0,
+            'business_id' => auth()->user()->id,
+            'attribute_slug' => $request->title]);
 
     // update categories
     if ($request->has('category_ids')) {

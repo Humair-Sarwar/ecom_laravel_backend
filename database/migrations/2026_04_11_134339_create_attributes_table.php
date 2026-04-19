@@ -17,10 +17,10 @@ return new class extends Migration
             $table->string('attribute_slug');
             $table->longText('sub_title')->nullable();
             $table->uuid('image_id')->nullable();
-            $table->foreign('image_id')->references('id')->on('medias')->onUpdate('cascade')->onDelete('set null');
-            $table->json('description')->nullable();
+            $table->foreign('image_id')->references('id')->on('medias')->onUpdate('cascade')->onDelete('set null');          
+            $table->longText('description')->nullable();
             $table->integer('design')->default(1);
-            $table->integer('purpose')->default(1);
+            $table->integer('is_active_for_buy');
             $table->uuid('business_id');
             $table->foreign('business_id')->references('id')->on('users')->onUpdate('cascade')->onDelete('cascade');
             $table->boolean('is_deleted')->default(false);
