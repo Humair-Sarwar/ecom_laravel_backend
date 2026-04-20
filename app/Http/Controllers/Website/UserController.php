@@ -75,7 +75,12 @@ class UserController extends Controller
             'message' => 'User logged in successfully',
             'token' => $token,
             'token_type' => 'Bearer',
+            // 'user_type' => $user->user_type
+            'user' => [
+            'id' => $user->id,
+            'email' => $user->email,
             'user_type' => $user->user_type
+        ]
         ], 200);
     }
 

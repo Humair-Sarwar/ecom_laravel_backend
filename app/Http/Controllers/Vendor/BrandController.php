@@ -38,7 +38,16 @@ class BrandController extends Controller
 
     public function addNewBrand(Request $request){
         $brandValidation = Validator::make($request->all(), [
-            'title' => 'required|string|unique:brands,title',
+            // 'title' => 'required|string|unique:brands,title',
+            'title' => [
+            'required',
+            'string',
+            Rule::unique('brands', 'title')
+    ->where(function ($query) {
+        return $query->where('is_deleted', 0)
+                     ->where('business_id', auth()->user()->id);
+    })
+        ],
             'sort_order' => 'required|integer',
             'image_id' => 'nullable|string',
         ], ['title.unique' => 'The brand title already exists. Please choose a different title.']);
@@ -56,7 +65,8 @@ class BrandController extends Controller
             'slug' => $request->title,
             'sort_order' => $request->sort_order,
             'image_id' => $request->image_id,
-            'business_id' => auth()->user()->id
+            'business_id' => auth()->user()->id,
+            'status' => $request->boolean('status')
         ]);
         $brand->load('media');
         return response()->json([
@@ -87,12 +97,15 @@ class BrandController extends Controller
         $brandValidation = Validator::make($request->all(), [
             // 'title' => 'required|string|unique:brands,title',
             'title' => [
-        'required',
-        'string',
-        Rule::unique('brands', 'title')
-    ->where(fn ($query) => $query->where('is_deleted', 0))
-    ->ignore($id),
-    ],
+            'required',
+            'string',
+            Rule::unique('brands', 'title')
+                ->ignore($id)
+                ->where(function ($query) {
+                    $query->where('is_deleted', 0)
+                          ->where('business_id', auth()->user()->business_id);
+                }),
+        ],
             'sort_order' => 'required|integer',
             'image_id' => 'nullable|string',
         ]);
@@ -118,6 +131,7 @@ class BrandController extends Controller
             'slug' => $request->title,
             'sort_order' => $request->sort_order,
             'image_id' => $request->image_id,
+            'status' => $request->boolean('status'),
             'business_id' => auth()->user()->id
         ]);
 
@@ -180,6 +194,15 @@ class BrandController extends Controller
             'message' => 'Brands fetched successfully!',
             'data' => $brands
         ], 200);
+    }
+
+
+    public function brandStatusUpdate(Request $request){
+        Brand::where('business_id', auth()->user()->id)->where('id', $request->id)->update(['status' => $request->status]);
+        return response()->json([
+            'status' => true,
+            'message' => 'Status updated!'
+        ]);
     }
     
 }

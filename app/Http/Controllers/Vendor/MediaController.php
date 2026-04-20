@@ -17,7 +17,7 @@ class MediaController extends Controller
         $to = min($medias->currentPage() * $medias->perPage(), $medias->total());
         return response()->json([
             'status' => true,
-            'message' => 'Brand list retrieved successfully',
+            'message' => 'Media list retrieved successfully',
             'data' => $medias->items(),
             'pagination' => [
                 'current_page' => $medias->currentPage(),
@@ -33,7 +33,7 @@ class MediaController extends Controller
     public function addNewMedia(Request $request){
         $file = $request->file('image');
         $validateMedia = Validator::make($request->all(), [
-            'image' => 'required|file|mimes:png,jpg,jpeg|max:2000'
+            'image' => 'required|file|mimes:png,jpg,jpeg,webp|max:2000'
         ]);
         if($validateMedia->fails()){
             return response()->json([
@@ -57,11 +57,11 @@ class MediaController extends Controller
     public function addMultipleUploads(Request $request){
         $validate = Validator::make($request->all(), [
             'images' => 'required',
-            'images.*' => 'image|mimes:jpg,jpeg,png|max:2000'
+            'images.*' => 'image|mimes:jpg,jpeg,png,webp|max:2000'
         ]);
         $uploadedFiles = [];
 
-foreach ($request->file('images') as $file) {
+    foreach ($request->file('images') as $file) {
 
     $fileName = time() . '_' . uniqid() . '_' . $file->getClientOriginalName();
 
