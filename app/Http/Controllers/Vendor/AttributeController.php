@@ -149,18 +149,22 @@ class AttributeController extends Controller
         'data' => $attribute->load(['categories', 'media'])
     ], 200);
 }
-    public function deleteAttribute(Request $request, $id){
-        $attribute = Attribute::where('id', $id)->first();
-        if(!$attribute){
-            return response()->json([
-                'status' => false,
-                'message' => 'Attribute not found'
-            ], 404);
-        }
-        $attribute->update(['is_deleted' => true]);
+    public function deleteAttribute(Request $request, $id) {
+    $attribute = Attribute::where('id', $id)->first();
+
+    if (!$attribute) {
         return response()->json([
-            'status' => true,
-            'message' =>'Attribute deleted successfully!'
-        ], 200);
+            'status' => false,
+            'message' => 'Attribute not found'
+        ], 404);
     }
+
+    $attribute->update(['is_deleted' => true]);
+    $attribute->terms()->update(['is_deleted' => true]);
+
+    return response()->json([
+        'status' => true,
+        'message' => 'Attribute and its terms deleted successfully!'
+    ], 200);
+}
 }

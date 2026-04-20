@@ -33,7 +33,7 @@ class MediaController extends Controller
     public function addNewMedia(Request $request){
         $file = $request->file('image');
         $validateMedia = Validator::make($request->all(), [
-            'image' => 'required|file|mimes:png,jpg,jpeg|max:2000'
+            'image' => 'required|file|mimes:png,jpg,jpeg,webp|max:2000'
         ]);
         if($validateMedia->fails()){
             return response()->json([
@@ -57,7 +57,7 @@ class MediaController extends Controller
     public function addMultipleUploads(Request $request){
         $validate = Validator::make($request->all(), [
             'images' => 'required',
-            'images.*' => 'image|mimes:jpg,jpeg,png|max:2000'
+            'images.*' => 'image|mimes:jpg,jpeg,png,webp|max:2000'
         ]);
         $uploadedFiles = [];
 

@@ -18,7 +18,7 @@ return new class extends Migration
             $table->integer('sort_order')->default(1);
             $table->uuid('image_id')->nullable();
             $table->foreign('image_id')->references('id')->on('medias')->onUpdate('cascade')->onDelete('set null');
-            $table->json('description')->nullable();
+            $table->longText('description')->nullable();
             $table->uuid('attribute_id');
             $table->foreign('attribute_id')->references('id')->on('attributes')->onUpdate('cascade')->onDelete('cascade');
             $table->uuid('business_id');

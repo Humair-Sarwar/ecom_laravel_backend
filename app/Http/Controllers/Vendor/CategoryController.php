@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Vendor;
 use App\Http\Controllers\Controller;
 use App\Models\Category;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 
@@ -192,22 +193,77 @@ class CategoryController extends Controller
         ], 200);
     }
 
-    public function deleteCategory(Request $request, $id){
-        $category = Category::where('id', $id)->where('business_id', auth()->user()->id)->first();
-        if(!$category){
-            return response()->json([
-                'status' => false,
-                'message' => 'Category not found!'
-            ], 404);
-        }
-        $category->update(['is_deleted' => true]);
+    // public function deleteCategory(Request $request, $id){
+    //     $category = Category::where('id', $id)->where('business_id', auth()->user()->id)->first();
+    //     if(!$category){
+    //         return response()->json([
+    //             'status' => false,
+    //             'message' => 'Category not found!'
+    //         ], 404);
+    //     }
+    //     $category->update(['is_deleted' => true]);
+
+    //     return response()->json([
+    //         'status' => true,
+    //         'message' => 'Category deleted successfully!'
+    //     ], 200);
+
+    // }
+
+
+
+
+public function deleteCategory(Request $request, $id) {
+    $category = Category::where('id', $id)
+        ->where('business_id', auth()->user()->id)
+        ->first();
+
+    if (!$category) {
+        return response()->json([
+            'status' => false,
+            'message' => 'Category not found!'
+        ], 404);
+    }
+
+    try {
+        DB::transaction(function () use ($category) {
+            $this->deleteCategoryRecursive($category);
+        });
 
         return response()->json([
             'status' => true,
-            'message' => 'Category deleted successfully!'
+            'message' => 'Category and all its sub-categories deleted successfully!'
         ], 200);
 
+    } catch (\Exception $e) {
+        return response()->json([
+            'status' => false,
+            'message' => 'Failed to delete category hierarchy',
+            'error' => $e->getMessage()
+        ], 500);
     }
+}
+
+
+private function deleteCategoryRecursive($category) {
+    // 1. Current category ko delete mark karein
+    $category->update(['is_deleted' => 1]);
+
+    // 2. Iske direct children find karein (is_deleted 0 wale)
+    $children = Category::where('parent_category_id', $category->id)->get();
+
+    // 3. Har child par yahi function dubara chalayein (Recursion)
+    foreach ($children as $child) {
+        $this->deleteCategoryRecursive($child);
+    }
+}
+
+
+
+
+
+
+
 
     // Categories selection in panel
     public function categories(Request $request)
