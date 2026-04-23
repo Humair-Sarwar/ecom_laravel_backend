@@ -18,6 +18,11 @@ class Category extends Model
         return $this->hasMany(Category::class, 'parent_category_id')->with(['children', 'media', 'coverMedia']);
     }
 
+    public function parent()
+    {
+        return $this->belongsTo(Category::class, 'parent_category_id');
+    }
+
     public function media(){
         return $this->belongsTo(Media::class, 'image_id');
     }

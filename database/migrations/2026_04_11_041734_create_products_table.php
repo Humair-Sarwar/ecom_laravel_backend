@@ -32,7 +32,7 @@ return new class extends Migration
             $table->integer('minutes')->default(1);
             $table->boolean('apply_stock_strictly')->default(true);
             $table->boolean('get_stock_alert')->default(true);
-            $table->json('description')->nullable();
+            $table->longText('description')->nullable();
 
             // 1: simple, 2: variable product
             $table->integer('product_type')->nullable()->default(1);

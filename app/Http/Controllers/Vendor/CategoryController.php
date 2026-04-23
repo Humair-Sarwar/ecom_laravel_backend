@@ -15,7 +15,7 @@ class CategoryController extends Controller
     $activeFilter = function ($query) use (&$activeFilter) {
         $query->where('is_active_for_buy', 1)
               ->where('is_deleted', false)
-              ->with(['children' => $activeFilter]);
+              ->with(['parent', 'children' => $activeFilter]);
     };
 
     $categories = Category::where('business_id', auth()->user()->id)
@@ -25,6 +25,7 @@ class CategoryController extends Controller
         ->with([
             'media',
             'coverMedia',
+            'parent',
             'children' => $activeFilter
         ])
         ->get();

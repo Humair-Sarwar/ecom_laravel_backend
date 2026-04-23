@@ -41,6 +41,7 @@ Route::prefix('vendor')->middleware(['auth:sanctum', 'user_type:2'])->group(func
     Route::get('/product/attributes/get', [ProductController::class, 'loadAttributes']);
     Route::get('/product/terms/get/{id}', [ProductController::class, 'loadTerms']);
     Route::post('/product/attribute/terms/save', [ProductController::class, 'saveSelectedAttributeTerms']);
+    Route::delete('/product/delete/{id}', [ProductController::class, 'deleteProduct']);
 
     // Attribute Routes
     Route::get('/attributes', [AttributeController::class, 'index']);

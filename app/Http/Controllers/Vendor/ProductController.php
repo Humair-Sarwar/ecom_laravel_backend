@@ -26,7 +26,7 @@ class ProductController extends Controller
         $searchByCategory = $request->search_by_category;
 
         $perPage = $request->per_page ?? 10;
-        $query = Product::where('business_id', auth()->user()->id)->where('is_deleted', false)->where('parent_product_id', null);
+        $query = Product::where('business_id', auth()->user()->id)->where('is_deleted', false)->where('parent_product_id', null)->with(['category', 'brand']);
 
         if($searchByTitle){
             $query->where('title', 'like', "%{$searchByTitle}%");
@@ -123,7 +123,9 @@ class ProductController extends Controller
         'apply_stock_strictly' => $request->apply_stock_strictly,
         'get_stock_alert' => $request->get_stock_alert,
         'description' => $request->description,
-        'business_id' => auth()->user()->id
+        'business_id' => auth()->user()->id,
+        'regular_price' => 0,
+        'sale_price' => 0
         ]);
         if ($request->has('product_image_ids')) {
         foreach ($request->product_image_ids as $image_id) {
@@ -185,7 +187,7 @@ class ProductController extends Controller
                 return response()->json([
                     'status' => false,
                     'message' => 'validation error!',
-                    'error' => $validateSimpleProduct->errors()->all()
+                    'error' => $validateSimpleProduct->errors()
                 ], 422);
             }
             $query->update($request->all());
@@ -209,7 +211,7 @@ class ProductController extends Controller
     }
 
     public function editProductStep1(Request $request, $id){
-        $product = Product::where('id', $id)->where('business_id', auth()->user()->id)->with('media')->first();
+        $product = Product::where('id', $id)->where('business_id', auth()->user()->id)->with(['media', 'category'])->first();
 
         if(!$product){
             return response()->json([
@@ -264,7 +266,12 @@ class ProductController extends Controller
             ], 404);
         }
 
-        $product->update($request->except(['product_image_ids']));
+        $data = $request->except(['product_image_ids']);
+        $data['days'] = $request->filled('days') ? $request->days : 1;
+        $data['hours'] = $request->filled('hours') ? $request->hours : 1;
+        $data['minutes'] = $request->filled('minutes') ? $request->minutes : 1;
+
+        $product->update($data);
 
         if ($request->filled('product_image_ids')) {
             $product->media()->sync(
@@ -363,6 +370,23 @@ class ProductController extends Controller
             'message' => 'Attribute and Terms saved successfully!',
         ], 201);
         
+    }
+
+    public function deleteProduct(Request $request, $id){
+        $product = Product::where('id', $id)->first();
+
+        if(!$product){
+            return response()->json([
+                'status' => false,
+                'message' => 'Product not found'
+            ], 404);
+        }
+        $product->update(['is_deleted' => true]);
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Product deleted successfully'
+        ], 200);
     }
     
 }
