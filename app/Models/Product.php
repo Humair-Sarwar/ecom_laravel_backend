@@ -7,6 +7,7 @@ use App\Models\Category;
 use App\Models\Media;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Str;
 use Laravel\Sanctum\HasApiTokens;
 
 class Product extends Model
@@ -23,6 +24,10 @@ class Product extends Model
             'product_id',
             'media_id'
         );
+    }
+
+    public function setProductSlugAttribute($value){
+        $this->attributes['product_slug'] = Str::slug($value);
     }
 
     public function category(){

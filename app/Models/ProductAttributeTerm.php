@@ -2,8 +2,11 @@
 
 namespace App\Models;
 
+use App\Models\Attribute;
+use App\Models\Term;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Laravel\Sanctum\HasApiTokens;
 
 class ProductAttributeTerm extends Model
@@ -12,4 +15,16 @@ class ProductAttributeTerm extends Model
     protected $table = 'product_attributes_terms';
 
     protected $guarded = [];
+
+
+
+    public function attribute()
+{
+    return $this->belongsTo(Attribute::class);
+}
+
+public function term()
+{
+    return $this->belongsTo(Term::class);
+}
 }
