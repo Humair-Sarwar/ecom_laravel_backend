@@ -36,8 +36,8 @@ return new class extends Migration
 
             // 1: simple, 2: variable product
             $table->integer('product_type')->nullable()->default(1);
-            $table->uuid('variation_image_id')->nullable();
-            $table->foreign('variation_image_id')->references('id')->on('medias')->onUpdate('cascade')->onDelete('set null');
+            $table->uuid('image_id')->nullable();
+            $table->foreign('image_id')->references('id')->on('medias')->onUpdate('cascade')->onDelete('set null');
             $table->string('product_slug')->unique()->nullable(); 
 
             $table->string('product_sku')->nullable();

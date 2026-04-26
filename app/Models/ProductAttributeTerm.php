@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Attribute;
+use App\Models\Media;
 use App\Models\Term;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
@@ -16,7 +17,9 @@ class ProductAttributeTerm extends Model
 
     protected $guarded = [];
 
-
+    public function mediaTerms(){
+        return $this->hasOne(Media::class, 'id', 'image_id');
+    }
 
     public function attribute()
 {

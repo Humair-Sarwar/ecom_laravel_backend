@@ -386,7 +386,7 @@ class ProductController extends Controller
 
 
     public function getSelectedAttributeTerms($product_id) {
-    $data = ProductAttributeTerm::with(['attribute', 'term'])
+    $data = ProductAttributeTerm::with(['attribute', 'term', 'mediaTerms'])
         ->where('product_id', $product_id)->orderBy('sort_order', 'asc')
         ->where('business_id', auth()->user()->id)
         ->get();
@@ -400,7 +400,8 @@ class ProductController extends Controller
                 'terms' => $items->map(function ($item) {
                     return [
                         'id' => $item->term_id,
-                        'name' => $item->term->title ?? 'N/A'
+                        'name' => $item->term->title ?? 'N/A',
+                        'media' => $item->mediaTerms
                     ];
                 })->values()
             ];
@@ -412,6 +413,35 @@ class ProductController extends Controller
         ], 200);
     }
 
+    public function clearTermImage(Request $request)
+    {
+        $request->validate([
+            'product_id' => 'required',
+            'term_id'    => 'required',
+        ]);
+
+        $termImage = ProductAttributeTerm::where('product_id', $request->product_id)
+            ->where('term_id', $request->term_id)
+            ->where('business_id', auth()->user()->id)
+            ->first();
+
+        if ($termImage) {
+            // Image ID ko null kar do
+            $termImage->update([
+                'image_id' => null
+            ]);
+
+            return response()->json([
+                'status'  => true,
+                'message' => 'Image cleared successfully!'
+            ], 200);
+        }
+
+        return response()->json([
+            'status'  => false,
+            'message' => 'Record not found'
+        ], 404);
+    }
 
     public function updateAttributeSortOrder(Request $request)
 {
@@ -460,6 +490,52 @@ class ProductController extends Controller
         ], 500);
     }
 }
+
+
+
+    public function syncTermImageToVariations(Request $request)
+{
+    $request->validate([
+        'product_id' => 'required',
+        'term_id'    => 'required', 
+    ]);
+
+    $attributeTerm = ProductAttributeTerm::where('product_id', $request->product_id)
+        ->where('term_id', $request->term_id)
+        ->where('business_id', auth()->user()->id)
+        ->first();
+
+    if (!$attributeTerm || !$attributeTerm->image_id) {
+        return response()->json([
+            'status' => false,
+            'message' => 'Is term ke liye image assigned nahi hy.'
+        ], 404);
+    }
+
+    $sourceImageId = $attributeTerm->image_id;
+
+    $childProductIds = DB::table('product_variation_term_mappings')
+        ->where('term_id', $request->term_id)
+        ->pluck('product_id');
+
+    $updatedRows = Product::whereIn('id', $childProductIds)
+        ->where('parent_product_id', $request->product_id)
+        ->where('business_id', auth()->user()->id)
+        ->update(['image_id' => $sourceImageId]);
+
+    return response()->json([
+        'status' => true,
+        'message' => "Image synced to $updatedRows variations successfully!",
+        'image_id' => $sourceImageId
+    ], 200);
+}
+
+
+
+
+
+
+
 
     public function generateVariations(Request $request)
     {
@@ -577,9 +653,8 @@ class ProductController extends Controller
             ], 404);
         }
 
-        $variations = DB::table('products')
-            ->where('parent_product_id', $id)
-            ->where('is_deleted', 0)
+        $variations = Product::where('parent_product_id', $id)
+            ->where('is_deleted', 0)->with('variationImage')
             ->paginate($perPage); 
 
         $from = ($variations->currentPage() - 1) * $variations->perPage() + 1;
@@ -842,7 +917,8 @@ class ProductController extends Controller
             'network',
             'SIM',
             'carrier_option',
-            'description'
+            'description',
+            'image_id'
         ]);
 
         if ($request->has('title')) {
@@ -857,6 +933,49 @@ class ProductController extends Controller
             'data' => $variation->fresh()
         ]);
     });
+}
+
+    public function saveTermImageIdInProductTerms(Request $request)
+{
+    // 1. Validation: Teeno IDs required hain aur UUID format mein honi chahiye
+    $request->validate([
+        'product_id' => 'required|uuid',
+        'term_id'    => 'required|uuid',
+        'image_id'   => 'nullable|uuid|exists:medias,id', // Image remove karne ke liye nullable rakha hai
+    ]);
+
+    try {
+        $record = ProductAttributeTerm::where('product_id', $request->product_id)
+            ->where('term_id', $request->term_id)
+            ->first();
+
+        if (!$record) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Record not found for this product and term combination.'
+            ], 404);
+        }
+
+        ProductAttributeTerm::where('product_id', $request->product_id)
+            ->where('term_id', $request->term_id)
+            ->update([
+                'image_id' => $request->image_id,
+            ]);
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Term image updated successfully.',
+            'data' => [
+                'image_id' => $request->image_id
+            ]
+        ]);
+
+    } catch (\Exception $e) {
+        return response()->json([
+            'status' => false,
+            'message' => 'Something went wrong: ' . $e->getMessage()
+        ], 500);
+    }
 }
     
 }

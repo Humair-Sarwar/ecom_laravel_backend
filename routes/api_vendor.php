@@ -53,6 +53,10 @@ Route::prefix('vendor')->middleware(['auth:sanctum', 'user_type:2'])->group(func
     Route::delete('/product/delete/{id}', [ProductController::class, 'deleteProduct']);
     Route::put('/product/publish/update', [ProductController::class, 'productPublishUpdate']);
 
+    Route::post('/product/term/save-image', [ProductController::class, 'saveTermImageIdInProductTerms']);
+    Route::post('/clear-term-image', [ProductController::class, 'clearTermImage']);
+    Route::post('/sync-term-image-to-variations', [ProductController::class, 'syncTermImageToVariations']);
+
     // Attribute Routes
     Route::get('/attributes', [AttributeController::class, 'index']);
     Route::post('/attribute', [AttributeController::class, 'createAttribute']);

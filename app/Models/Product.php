@@ -26,6 +26,10 @@ class Product extends Model
         );
     }
 
+    public function variationImage(){
+        return $this->hasOne(Media::class, 'id', 'image_id');
+    }
+
     public function setProductSlugAttribute($value){
         $this->attributes['product_slug'] = Str::slug($value);
     }
