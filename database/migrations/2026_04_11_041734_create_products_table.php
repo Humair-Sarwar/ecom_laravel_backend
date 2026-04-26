@@ -32,16 +32,19 @@ return new class extends Migration
             $table->integer('minutes')->default(1);
             $table->boolean('apply_stock_strictly')->default(true);
             $table->boolean('get_stock_alert')->default(true);
-            $table->json('description')->nullable();
+            $table->longText('description')->nullable();
 
             // 1: simple, 2: variable product
             $table->integer('product_type')->nullable()->default(1);
+            $table->uuid('image_id')->nullable();
+            $table->foreign('image_id')->references('id')->on('medias')->onUpdate('cascade')->onDelete('set null');
+            $table->string('product_slug')->unique()->nullable(); 
 
             $table->string('product_sku')->nullable();
             $table->boolean('product_status_stock')->nullable()->default(true);
             $table->integer('min_stock_alert')->nullable()->default(0);
-            $table->decimal('regular_price', 12, 4)->nullable();
-            $table->decimal('sale_price', 12, 4)->nullable();
+            $table->double('regular_price', 15, 2)->nullable();
+            $table->double('sale_price', 15, 2)->nullable();
             $table->integer('release_year')->nullable();
             $table->integer('SIM')->nullable();
             $table->integer('network')->nullable();

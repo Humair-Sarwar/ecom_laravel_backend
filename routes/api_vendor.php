@@ -34,13 +34,28 @@ Route::prefix('vendor')->middleware(['auth:sanctum', 'user_type:2'])->group(func
     Route::get('/products', [ProductController::class, 'index']);
     Route::post('/product/step1', [ProductController::class, 'createProductStep1']);
     Route::put('/product/type/update', [ProductController::class, 'updateProductType']);
+    Route::get('/product/type/get/{id}', [ProductController::class, 'getProductType']);
     Route::put('/product/create-step2', [ProductController::class, 'createProductStep2']);
     Route::get('/product/edit/step1/{id}', [ProductController::class, 'editProductStep1']);
     Route::put('/product/update/step1', [ProductController::class, 'updateProductStep1']);
     Route::get('/product/edit/step2/simple/{id}', [ProductController::class, 'editProductSimpleStep2']);
-    Route::get('/product/attributes/get', [ProductController::class, 'loadAttributes']);
+    Route::get('/product/attributes/get/{id}', [ProductController::class, 'loadAttributes']);
     Route::get('/product/terms/get/{id}', [ProductController::class, 'loadTerms']);
     Route::post('/product/attribute/terms/save', [ProductController::class, 'saveSelectedAttributeTerms']);
+    Route::get('/products/{product_id}/attributes', [ProductController::class, 'getSelectedAttributeTerms']);
+    Route::delete('products/attributes/delete', [ProductController::class, 'deleteProductAttribute']);
+    Route::delete('products/terms/delete', [ProductController::class, 'deleteProductTerm']);
+    Route::patch('products/attributes/update-sort-order', [ProductController::class, 'updateAttributeSortOrder']);
+    Route::post('products/generate-variations', [ProductController::class, 'generateVariations']);
+    Route::get('products/{id}/variations', [ProductController::class, 'getProductVariations']);
+    Route::delete('/products/remove-term-variations', [ProductController::class, 'removeTermAndVariations']);
+    Route::put('/products/variations/{id}', [ProductController::class, 'updateVariation']);
+    Route::delete('/product/delete/{id}', [ProductController::class, 'deleteProduct']);
+    Route::put('/product/publish/update', [ProductController::class, 'productPublishUpdate']);
+
+    Route::post('/product/term/save-image', [ProductController::class, 'saveTermImageIdInProductTerms']);
+    Route::post('/clear-term-image', [ProductController::class, 'clearTermImage']);
+    Route::post('/sync-term-image-to-variations', [ProductController::class, 'syncTermImageToVariations']);
 
     // Attribute Routes
     Route::get('/attributes', [AttributeController::class, 'index']);
