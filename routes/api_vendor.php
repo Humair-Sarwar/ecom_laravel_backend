@@ -6,7 +6,9 @@ use App\Http\Controllers\Vendor\CategoryController;
 use App\Http\Controllers\Vendor\MediaController;
 use App\Http\Controllers\vendor\PolicyController;
 use App\Http\Controllers\Vendor\ProductController;
+use App\Http\Controllers\Vendor\SiteMenuController;
 use App\Http\Controllers\Vendor\TermController;
+use App\Models\SiteMenu;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('vendor')->middleware(['auth:sanctum', 'user_type:2'])->group(function (){
@@ -91,5 +93,13 @@ Route::prefix('vendor')->middleware(['auth:sanctum', 'user_type:2'])->group(func
         Route::put('/return-policy/{id}', 'updateReturnPolicy');
         Route::delete('/return-policy/{id}', 'deleteReturn');
         Route::get('/returns/panel', 'ReturnSelection');
+    });
+
+
+    // Site Settings -> Menu Json
+    Route::controller(SiteMenuController::class)->group(function (){
+        Route::get('/menu-json', 'getVendorMenu');
+        Route::patch('/menu-json', 'save');
+        
     });
 });
