@@ -268,54 +268,54 @@ private function deleteCategoryRecursive($category) {
 
     // Categories selection in panel
     public function categories(Request $request)
-{
-    $search = $request->search;
-    $activeFilter = function ($q) use (&$activeFilter) {
-        $q->where('is_active_for_buy', 1)
-          ->where('is_deleted', false)
-          ->with(['children' => $activeFilter]);
-    };
+    {
+        $search = $request->search;
+        $activeFilter = function ($q) use (&$activeFilter) {
+            $q->where('is_active_for_buy', 1)
+            ->where('is_deleted', false)
+            ->with(['children' => $activeFilter]);
+        };
 
-    $query = Category::where('business_id', auth()->user()->id)
-        ->where('is_active_for_buy', 1)
-        ->where('is_deleted', false)
-        ->where('level', 0);
+        $query = Category::where('business_id', auth()->user()->id)
+            ->where('is_active_for_buy', 1)
+            ->where('is_deleted', false)
+            ->where('level', 0);
 
-    $query->with([
-        'media',
-        'coverMedia',
-        'children' => $activeFilter
-    ]);
+        $query->with([
+            'media',
+            'coverMedia',
+            'children' => $activeFilter
+        ]);
 
-    if ($search) {
-        $query->where(function ($q) use ($search) {
-            $q->where('title', 'like', "%{$search}%")
-            ->orWhereHas('children', function ($q1) use ($search) {
-            
-                $q1->where('is_deleted', false)->where('is_active_for_buy', 1)
-                   ->where(function($sub) use ($search) {
-                       $sub->where('title', 'like', "%{$search}%")
-                           ->orWhereHas('children', function ($q2) use ($search) {
-                               $q2->where('is_deleted', false)->where('is_active_for_buy', 1)
-                                  ->where(function($sub2) use ($search) {
-                                      $sub2->where('title', 'like', "%{$search}%")
-                                           ->orWhereHas('children', function ($q3) use ($search) {
-                                               $q3->where('is_deleted', false)->where('is_active_for_buy', 1)
-                                                  ->where('title', 'like', "%{$search}%");
-                                           });
-                                  });
-                           });
-                   });
+        if ($search) {
+            $query->where(function ($q) use ($search) {
+                $q->where('title', 'like', "%{$search}%")
+                ->orWhereHas('children', function ($q1) use ($search) {
+                
+                    $q1->where('is_deleted', false)->where('is_active_for_buy', 1)
+                    ->where(function($sub) use ($search) {
+                        $sub->where('title', 'like', "%{$search}%")
+                            ->orWhereHas('children', function ($q2) use ($search) {
+                                $q2->where('is_deleted', false)->where('is_active_for_buy', 1)
+                                    ->where(function($sub2) use ($search) {
+                                        $sub2->where('title', 'like', "%{$search}%")
+                                            ->orWhereHas('children', function ($q3) use ($search) {
+                                                $q3->where('is_deleted', false)->where('is_active_for_buy', 1)
+                                                    ->where('title', 'like', "%{$search}%");
+                                            });
+                                    });
+                            });
+                    });
+                });
             });
-        });
+        }
+
+        $categories = $query->orderBy('sort_order')->get();
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Categories fetched successfully!',
+            'data' => $categories
+        ], 200);
     }
-
-    $categories = $query->orderBy('sort_order')->get();
-
-    return response()->json([
-        'status' => true,
-        'message' => 'Categories fetched successfully!',
-        'data' => $categories
-    ], 200);
-}
 }

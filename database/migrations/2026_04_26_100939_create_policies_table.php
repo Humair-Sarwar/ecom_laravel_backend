@@ -20,6 +20,7 @@ return new class extends Migration
             $table->uuid('business_id');
             $table->foreign('business_id')->references('id')->on('users')->onUpdate('cascade')->onDelete('cascade');
             $table->boolean('is_deleted')->default(false);
+            $table->timestamps();
         });
     }
 

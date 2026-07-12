@@ -44,7 +44,7 @@ class PolicyController extends Controller
         ],
         ]);
 
-        if($brandValidation->fails()){
+        if($warrantyValidation->fails()){
             return response()->json([
                 'status' => false,
                 'message' => 'Warranty policy validation failed',
@@ -75,7 +75,7 @@ class PolicyController extends Controller
         ],
         ]);
 
-        if($brandValidation->fails()){
+        if($warrantyValidation->fails()){
             return response()->json([
                 'status' => false,
                 'message' => 'Warranty policy validation failed',
@@ -150,7 +150,7 @@ class PolicyController extends Controller
         ],
         ]);
 
-        if($brandValidation->fails()){
+        if($returnValidation->fails()){
             return response()->json([
                 'status' => false,
                 'message' => 'Return policy validation failed',
@@ -219,6 +219,38 @@ class PolicyController extends Controller
         return response()->json([
             'status' => true,
             'message' => 'Return deleted successfully'
+        ], 200);
+    }
+
+
+
+    // Warranty selection in panel
+    public function WarrantySelection(Request $request){
+        $search = $request->search;
+        $query = Policy::where('business_id', auth()->user()->id)->where('is_deleted', false)->where('approved', 1)->where('type', 1);
+        if($search){
+            $query->where('title', 'like', "%{$search}%");
+        }
+        $warranties = $query->latest()->get();
+        return response()->json([
+            'status' => true,
+            'message' => 'Warranties fetched successfully!',
+            'data' => $warranties
+        ], 200);
+    }
+
+    // Return selection in panel
+    public function ReturnSelection(Request $request){
+        $search = $request->search;
+        $query = Policy::where('business_id', auth()->user()->id)->where('is_deleted', false)->where('status', true)->where('type', 2);
+        if($search){
+            $query->where('title', 'like', "%{$search}%");
+        }
+        $returns = $query->latest()->get();
+        return response()->json([
+            'status' => true,
+            'message' => 'Returns fetched successfully!',
+            'data' => $returns
         ], 200);
     }
 }

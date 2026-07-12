@@ -4,6 +4,7 @@ use App\Http\Controllers\Vendor\AttributeController;
 use App\Http\Controllers\Vendor\BrandController;
 use App\Http\Controllers\Vendor\CategoryController;
 use App\Http\Controllers\Vendor\MediaController;
+use App\Http\Controllers\vendor\PolicyController;
 use App\Http\Controllers\Vendor\ProductController;
 use App\Http\Controllers\Vendor\TermController;
 use Illuminate\Support\Facades\Route;
@@ -76,4 +77,19 @@ Route::prefix('vendor')->middleware(['auth:sanctum', 'user_type:2'])->group(func
     Route::post('/media', [MediaController::class, 'addNewMedia']);
     Route::post('/medias/uploads', [MediaController::class, 'addMultipleUploads']);
     Route::delete('/media/delete/{id}', [MediaController::class, 'deleteMedia']);
+
+    // Policies Routes
+    Route::controller(PolicyController::class)->group(function () {
+        Route::get('/warranty-policy', 'warrantyPolicies');
+        Route::post('/warranty-policy/create', 'createWarrantyPolicy');
+        Route::put('/warranty-policy/{id}', 'updateWarrantyPolicy');
+        Route::delete('/warranty-policy/{id}', 'deleteWarranty');
+        Route::get('/warranties/panel', 'WarrantySelection');
+
+        Route::get('/return-policy', 'returnPolicies');
+        Route::post('/return-policy/create', 'createReturnPolicy');
+        Route::put('/return-policy/{id}', 'updateReturnPolicy');
+        Route::delete('/return-policy/{id}', 'deleteReturn');
+        Route::get('/returns/panel', 'ReturnSelection');
+    });
 });
