@@ -1,4 +1,5 @@
 <?php
+use App\Http\Controllers\Vendor\CategoryController;
 use App\Http\Controllers\Vendor\SiteMenuController;
 use App\Http\Controllers\Website\UserController;
 use Illuminate\Support\Facades\Route;
@@ -11,4 +12,5 @@ Route::prefix('website')->group(function (){
     Route::post('/logout', [UserController::class, 'logout'])->middleware('auth:sanctum');
 
     Route::get('/menu-json', [SiteMenuController::class, 'siteMenuGet']);
+    Route::get('/categories', [CategoryController::class, 'websiteCategories']);
 });

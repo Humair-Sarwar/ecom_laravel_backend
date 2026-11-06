@@ -977,7 +977,434 @@ class ProductController extends Controller
         ], 500);
     }
 }
-    
+
+    /**
+     * Collect a category ID and all of its active descendant category IDs for the vendor.
+     */
+    protected function getDescendantCategoryIds(string $businessId, string $rootCategoryId): array
+    {
+        $allCategories = Category::where('business_id', $businessId)
+            ->where('is_deleted', false)
+            ->get(['id', 'parent_category_id']);
+
+        $childrenByParent = [];
+        foreach ($allCategories as $cat) {
+            $parentId = (string) ($cat->parent_category_id ?? '');
+            $childrenByParent[$parentId][] = (string) $cat->id;
+        }
+
+        $resultIds = [$rootCategoryId];
+        $queue = [$rootCategoryId];
+
+        while (!empty($queue)) {
+            $currentId = array_shift($queue);
+            if (!empty($childrenByParent[$currentId])) {
+                foreach ($childrenByParent[$currentId] as $childId) {
+                    if (!in_array($childId, $resultIds, true)) {
+                        $resultIds[] = $childId;
+                        $queue[] = $childId;
+                    }
+                }
+            }
+        }
+
+        return $resultIds;
+    }
+
+    /**
+     * Format condition code into human-readable label for POS cards.
+     */
+    protected function formatConditionLabel($condition): string
+    {
+        $map = [
+            1 => 'Brand New',
+            2 => 'Refurbished',
+            3 => 'Like New',
+            4 => 'Excellent',
+            5 => 'Good',
+            6 => 'Fair',
+            7 => 'For Parts / Not Working',
+        ];
+
+        if (is_numeric($condition) && isset($map[(int) $condition])) {
+            return $map[(int) $condition];
+        }
+
+        return is_string($condition) && trim($condition) !== ''
+            ? $condition
+            : 'Brand New';
+    }
+
+    /**
+     * Resolve full storage URL for a media path.
+     */
+    protected function resolveMediaUrl(?string $mediaPath): ?string
+    {
+        if (!$mediaPath) {
+            return null;
+        }
+        if (str_starts_with($mediaPath, 'http://') || str_starts_with($mediaPath, 'https://')) {
+            return $mediaPath;
+        }
+        return asset('storage/' . ltrim($mediaPath, '/'));
+    }
+
+    /**
+     * Get published Simple and Variable products for the POS Terminal.
+     */
+    public function posProducts(Request $request)
+    {
+        $businessId = auth()->id();
+        $hotList = $request->query('hot_list');
+        $categoryParam = $request->query('category');
+        $categoryId = $request->query('category_id');
+        $search = trim((string) $request->query('search', ''));
+
+        $baseQuery = Product::where('business_id', $businessId)
+            ->where('is_deleted', false)
+            ->where('is_published', true)
+            ->whereNull('parent_product_id')
+            ->with([
+                'category',
+                'brand',
+                'media',
+                'variationImage',
+                'variations' => function ($q) {
+                    $q->where('is_deleted', false)
+                        ->orderBy('is_default', 'desc')
+                        ->orderBy('created_at', 'asc')
+                        ->with(['variationImage', 'category', 'brand']);
+                },
+            ]);
+
+        // Filter by category (and its descendant subcategories) when a specific category is active
+        $isAllCategory = ($categoryId === '1') || (strtolower((string) $categoryParam) === 'all');
+        if ($categoryId && !$isAllCategory && $hotList !== 'true') {
+            $categoryIds = $this->getDescendantCategoryIds((string) $businessId, (string) $categoryId);
+            $baseQuery->whereIn('category_id', $categoryIds);
+        }
+
+        // Filter by Hot List when hot_list=true (fallback to all published vendor products if none marked hot yet)
+        if ($hotList === 'true' || $hotList === '1' || $hotList === true) {
+            $hotClone = clone $baseQuery;
+            if ($hotClone->where('is_hot', true)->exists()) {
+                $baseQuery->where('is_hot', true);
+            }
+        }
+
+        // Optional search by title or SKU across simple products and variations
+        if ($search !== '') {
+            $baseQuery->where(function ($q) use ($search) {
+                $q->where('title', 'like', "%{$search}%")
+                    ->orWhere('product_sku', 'like', "%{$search}%")
+                    ->orWhereHas('variations', function ($vq) use ($search) {
+                        $vq->where('is_deleted', false)
+                            ->where(function ($inner) use ($search) {
+                                $inner->where('title', 'like', "%{$search}%")
+                                    ->orWhere('product_sku', 'like', "%{$search}%");
+                            });
+                    });
+            });
+        }
+
+        $rootProducts = $baseQuery
+            ->orderBy('sort_order', 'asc')
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        // Collect all variation IDs and variable parent IDs to batch-load variation terms, attributes & term images
+        $variationIds = [];
+        $variableParentIds = [];
+        foreach ($rootProducts as $rootProduct) {
+            if ((int) $rootProduct->product_type === 2) {
+                $variableParentIds[] = $rootProduct->id;
+                foreach ($rootProduct->variations as $var) {
+                    $variationIds[] = $var->id;
+                }
+            }
+        }
+
+        $termsByVariationId = [];
+        if (!empty($variationIds)) {
+            $termRows = DB::table('product_variation_term_mappings')
+                ->join('terms', 'product_variation_term_mappings.term_id', '=', 'terms.id')
+                ->join('attributes', 'terms.attribute_id', '=', 'attributes.id')
+                ->whereIn('product_variation_term_mappings.product_id', $variationIds)
+                ->select(
+                    'product_variation_term_mappings.product_id',
+                    'terms.id as term_id',
+                    'terms.title as term_title',
+                    'attributes.id as attribute_id',
+                    'attributes.title as attribute_title'
+                )
+                ->get();
+
+            foreach ($termRows as $row) {
+                $termsByVariationId[$row->product_id][] = [
+                    'term_id' => (string) $row->term_id,
+                    'term_title' => $row->term_title,
+                    'attribute_id' => (string) $row->attribute_id,
+                    'attribute_title' => $row->attribute_title,
+                ];
+            }
+        }
+
+        // Batch-load product attributes and terms (plus term images) ordered by sort_order
+        $attributesByParentId = [];
+        $termMediaByParentAndTerm = [];
+        if (!empty($variableParentIds)) {
+            $attrTermRows = DB::table('product_attributes_terms')
+                ->join('attributes', 'product_attributes_terms.attribute_id', '=', 'attributes.id')
+                ->join('terms', 'product_attributes_terms.term_id', '=', 'terms.id')
+                ->leftJoin('medias', 'product_attributes_terms.image_id', '=', 'medias.id')
+                ->whereIn('product_attributes_terms.product_id', $variableParentIds)
+                ->orderBy('product_attributes_terms.sort_order', 'asc')
+                ->select(
+                    'product_attributes_terms.product_id',
+                    'product_attributes_terms.attribute_id',
+                    'product_attributes_terms.term_id',
+                    'product_attributes_terms.sort_order',
+                    'attributes.title as attribute_title',
+                    'terms.title as term_title',
+                    'medias.media_path'
+                )
+                ->get();
+
+            foreach ($attrTermRows as $row) {
+                $pId = (string) $row->product_id;
+                $aId = (string) $row->attribute_id;
+                $tId = (string) $row->term_id;
+
+                if ($row->media_path) {
+                    $termMediaByParentAndTerm[$pId . ':' . $tId] = $row->media_path;
+                }
+
+                if (!isset($attributesByParentId[$pId][$aId])) {
+                    $attributesByParentId[$pId][$aId] = [
+                        'attribute_id' => $aId,
+                        'attribute_name' => $row->attribute_title ?? 'Option',
+                        'terms' => [],
+                    ];
+                }
+
+                $alreadyAdded = false;
+                foreach ($attributesByParentId[$pId][$aId]['terms'] as $existingTerm) {
+                    if ($existingTerm['id'] === $tId) {
+                        $alreadyAdded = true;
+                        break;
+                    }
+                }
+
+                if (!$alreadyAdded) {
+                    $attributesByParentId[$pId][$aId]['terms'][] = [
+                        'id' => $tId,
+                        'name' => $row->term_title,
+                        'image' => $this->resolveMediaUrl($row->media_path),
+                    ];
+                }
+            }
+        }
+
+        $posItems = [];
+
+        foreach ($rootProducts as $product) {
+            $parentMediaPath = optional($product->variationImage)->media_path
+                ?: optional($product->media->first())->media_path;
+            $parentImageUrl = $this->resolveMediaUrl($parentMediaPath);
+            $parentBrandTitle = optional($product->brand)->title ?? 'N/A';
+            $parentCategoryTitle = optional($product->category)->title ?? 'N/A';
+            $parentConditionLabel = $this->formatConditionLabel($product->condition);
+
+            // Variable product -> emit a single product card with its attributes, term pills, and variations list
+            if ((int) $product->product_type === 2 && $product->variations->isNotEmpty()) {
+                $formattedVariations = [];
+                $fallbackAttributesMap = $attributesByParentId[(string) $product->id] ?? [];
+
+                foreach ($product->variations as $variation) {
+                    $mappedTerms = $termsByVariationId[$variation->id] ?? [];
+                    $termIds = [];
+                    $termMap = [];
+                    $variantTitles = [];
+
+                    foreach ($mappedTerms as $t) {
+                        $tId = (string) ($t['term_id'] ?? '');
+                        $aId = (string) ($t['attribute_id'] ?? '');
+                        $tTitle = $t['term_title'] ?? null;
+                        $aTitle = $t['attribute_title'] ?? 'Option';
+
+                        if ($tId !== '') {
+                            $termIds[] = $tId;
+                        }
+                        if ($aId !== '' && $tId !== '') {
+                            $termMap[$aId] = $tId;
+                            if (!isset($fallbackAttributesMap[$aId])) {
+                                $fallbackAttributesMap[$aId] = [
+                                    'attribute_id' => $aId,
+                                    'attribute_name' => $aTitle,
+                                    'terms' => [],
+                                ];
+                            }
+                            $existsInAttr = false;
+                            foreach ($fallbackAttributesMap[$aId]['terms'] as $et) {
+                                if ($et['id'] === $tId) {
+                                    $existsInAttr = true;
+                                    break;
+                                }
+                            }
+                            if (!$existsInAttr) {
+                                $fallbackAttributesMap[$aId]['terms'][] = [
+                                    'id' => $tId,
+                                    'name' => $tTitle,
+                                    'image' => null,
+                                ];
+                            }
+                        }
+                        if ($tTitle) {
+                            $variantTitles[] = $tTitle;
+                        }
+                    }
+
+                    // Resolve variation image: 1) variation.variationImage, 2) mapped term image, 3) parent gallery image
+                    $varMediaPath = optional($variation->variationImage)->media_path;
+                    if (!$varMediaPath && !empty($mappedTerms)) {
+                        foreach ($mappedTerms as $t) {
+                            $key = $product->id . ':' . ($t['term_id'] ?? '');
+                            if (!empty($termMediaByParentAndTerm[$key])) {
+                                $varMediaPath = $termMediaByParentAndTerm[$key];
+                                break;
+                            }
+                        }
+                    }
+                    $variationImageUrl = $varMediaPath
+                        ? $this->resolveMediaUrl($varMediaPath)
+                        : $parentImageUrl;
+
+                    $regularPrice = (float) ($variation->regular_price ?? $product->regular_price ?? 0);
+                    $salePrice = (float) ($variation->sale_price ?? $product->sale_price ?? 0);
+                    $effectivePrice = $salePrice > 0 ? $salePrice : $regularPrice;
+                    $oldPrice = ($regularPrice > 0 && $salePrice > 0 && $regularPrice > $salePrice)
+                        ? $regularPrice
+                        : null;
+
+                    $inStock = (bool) ($variation->product_status_stock ?? true);
+                    $stockCount = $inStock
+                        ? max(1, (int) ($variation->min_stock_alert ?? 1))
+                        : 0;
+
+                    $formattedVariations[] = [
+                        'id' => $variation->id,
+                        'parent_product_id' => $product->id,
+                        'name' => $variation->title ?: $product->title,
+                        'title' => $variation->title ?: $product->title,
+                        'condition' => $variation->condition
+                            ? $this->formatConditionLabel($variation->condition)
+                            : $parentConditionLabel,
+                        'brand' => optional($variation->brand)->title ?? $parentBrandTitle,
+                        'category' => optional($variation->category)->title ?? $parentCategoryTitle,
+                        'price' => $effectivePrice,
+                        'oldPrice' => $oldPrice,
+                        'regular_price' => $regularPrice,
+                        'sale_price' => $salePrice,
+                        'stock' => $stockCount,
+                        'product_status_stock' => $inStock ? 1 : 0,
+                        'sku' => (string) ($variation->product_sku ?: $product->product_sku ?: 'N/A'),
+                        'product_sku' => (string) ($variation->product_sku ?: $product->product_sku ?: 'N/A'),
+                        'is_default' => (int) ($variation->is_default ?? 0) === 1,
+                        'image' => $variationImageUrl,
+                        'term_ids' => $termIds,
+                        'term_map' => $termMap,
+                        'variants' => $variantTitles,
+                        'vatStatus' => 'VAT Exempt',
+                    ];
+                }
+
+                // Default variation is first because relation is ordered by is_default desc, created_at asc
+                $defaultVariation = collect($formattedVariations)->firstWhere('is_default', true)
+                    ?? $formattedVariations[0];
+
+                $posItems[] = [
+                    'id' => $product->id,
+                    'variation_id' => $defaultVariation['id'],
+                    'parent_product_id' => null,
+                    'product_type' => 2,
+                    'listing_type' => 'Variable',
+                    'name' => $defaultVariation['name'] ?: $product->title,
+                    'title' => $defaultVariation['title'] ?: $product->title,
+                    'parent_title' => $product->title,
+                    'condition' => $defaultVariation['condition'] ?: $parentConditionLabel,
+                    'brand' => $defaultVariation['brand'] ?: $parentBrandTitle,
+                    'category' => $defaultVariation['category'] ?: $parentCategoryTitle,
+                    'category_id' => $product->category_id,
+                    'brand_id' => $product->brand_id,
+                    'price' => $defaultVariation['price'],
+                    'oldPrice' => $defaultVariation['oldPrice'],
+                    'regular_price' => $defaultVariation['regular_price'],
+                    'sale_price' => $defaultVariation['sale_price'],
+                    'stock' => $defaultVariation['stock'],
+                    'product_status_stock' => $defaultVariation['product_status_stock'],
+                    'sku' => $defaultVariation['sku'],
+                    'product_sku' => $defaultVariation['product_sku'],
+                    'variants' => $defaultVariation['variants'],
+                    'image' => $defaultVariation['image'] ?: $parentImageUrl,
+                    'vatStatus' => 'VAT Exempt',
+                    'is_hot' => (bool) $product->is_hot,
+                    'attributes' => array_values($fallbackAttributesMap),
+                    'variations' => $formattedVariations,
+                    'default_term_map' => $defaultVariation['term_map'] ?? [],
+                ];
+            } else {
+                // Simple product (or variable product before variations are generated)
+                $regularPrice = (float) ($product->regular_price ?? 0);
+                $salePrice = (float) ($product->sale_price ?? 0);
+                $effectivePrice = $salePrice > 0 ? $salePrice : $regularPrice;
+                $oldPrice = ($regularPrice > 0 && $salePrice > 0 && $regularPrice > $salePrice)
+                    ? $regularPrice
+                    : null;
+
+                $inStock = (bool) ($product->product_status_stock ?? true);
+                $stockCount = $inStock
+                    ? max(1, (int) ($product->min_stock_alert ?? 1))
+                    : 0;
+
+                $posItems[] = [
+                    'id' => $product->id,
+                    'variation_id' => null,
+                    'parent_product_id' => null,
+                    'product_type' => (int) ($product->product_type ?? 1),
+                    'listing_type' => ((int) ($product->product_type ?? 1) === 2) ? 'Variable' : 'Simple',
+                    'name' => $product->title,
+                    'title' => $product->title,
+                    'parent_title' => $product->title,
+                    'condition' => $parentConditionLabel,
+                    'brand' => $parentBrandTitle,
+                    'category' => $parentCategoryTitle,
+                    'category_id' => $product->category_id,
+                    'brand_id' => $product->brand_id,
+                    'price' => $effectivePrice,
+                    'oldPrice' => $oldPrice,
+                    'regular_price' => $regularPrice,
+                    'sale_price' => $salePrice,
+                    'stock' => $stockCount,
+                    'product_status_stock' => $inStock ? 1 : 0,
+                    'sku' => (string) ($product->product_sku ?: 'N/A'),
+                    'product_sku' => (string) ($product->product_sku ?: 'N/A'),
+                    'variants' => [],
+                    'image' => $parentImageUrl,
+                    'vatStatus' => 'VAT Exempt',
+                    'is_hot' => (bool) $product->is_hot,
+                    'attributes' => [],
+                    'variations' => [],
+                    'default_term_map' => [],
+                ];
+            }
+        }
+
+        return response()->json([
+            'status' => true,
+            'message' => 'POS products retrieved successfully',
+            'data' => $posItems,
+        ], 200);
+    }
 }
 
 

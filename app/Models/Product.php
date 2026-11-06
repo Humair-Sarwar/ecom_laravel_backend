@@ -42,6 +42,17 @@ class Product extends Model
         return $this->belongsTo(Brand::class);
     }
 
+    public function variations()
+    {
+        return $this->hasMany(Product::class, 'parent_product_id')
+            ->where('is_deleted', false);
+    }
+
+    public function parentProduct()
+    {
+        return $this->belongsTo(Product::class, 'parent_product_id');
+    }
+
     protected static function booted()
     {
         static::creating(function ($product) {

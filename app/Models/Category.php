@@ -15,7 +15,10 @@ class Category extends Model
     protected $guarded = [];
 
     public function children(){
-        return $this->hasMany(Category::class, 'parent_category_id')->with(['children', 'media', 'coverMedia']);
+        return $this->hasMany(Category::class, 'parent_category_id')
+            ->where('is_deleted', false)
+            ->orderBy('sort_order', 'asc')
+            ->with(['children', 'media', 'coverMedia']);
     }
 
     public function parent()

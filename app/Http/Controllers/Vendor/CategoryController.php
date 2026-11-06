@@ -318,4 +318,75 @@ private function deleteCategoryRecursive($category) {
             'data' => $categories
         ], 200);
     }
+
+    // Categories for POS Bar (First-level categories with recursive active children)
+    public function posCategories(Request $request)
+    {
+        $activeFilter = function ($q) use (&$activeFilter) {
+            $q->where('is_active_for_buy', 1)
+              ->where('is_deleted', false)
+              ->orderBy('sort_order', 'asc')
+              ->orderBy('created_at', 'asc')
+              ->with(['children' => $activeFilter]);
+        };
+
+        $categories = Category::where('business_id', auth()->user()->id)
+            ->where('is_active_for_buy', 1)
+            ->where('is_deleted', false)
+            ->where('level', 0)
+            ->orderBy('sort_order', 'asc')
+            ->orderBy('created_at', 'asc')
+            ->with(['children' => $activeFilter])
+            ->get();
+
+        return response()->json([
+            'status' => true,
+            'message' => 'POS Categories fetched successfully!',
+            'data' => $categories
+        ], 200);
+    }
+
+    // Parent-level categories for Website Home Carousel
+    public function websiteCategories(Request $request)
+    {
+        $categories = Category::where('is_active_for_buy', 1)
+            ->where('is_deleted', false)
+            ->where('level', 0)
+            ->whereNull('parent_category_id')
+            ->with(['media', 'coverMedia'])
+            ->orderBy('sort_order', 'asc')
+            ->orderBy('created_at', 'asc')
+            ->get()
+            ->map(function ($cat) {
+                $mediaPath = optional($cat->media)->media_path
+                    ?: optional($cat->coverMedia)->media_path;
+
+                return [
+                    'id' => $cat->id,
+                    'title' => $cat->title,
+                    'name' => $cat->title,
+                    'category_slug' => $cat->category_slug,
+                    'slug' => $cat->category_slug,
+                    'sort_order' => $cat->sort_order,
+                    'image' => $mediaPath,
+                    'media' => $cat->media,
+                    'cover_media' => $cat->coverMedia,
+                    'category' => [
+                        'id' => $cat->id,
+                        'name' => $cat->title,
+                        'title' => $cat->title,
+                        'slug' => $cat->category_slug,
+                        'category_slug' => $cat->category_slug,
+                        'image' => $mediaPath,
+                    ],
+                ];
+            });
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Website parent categories fetched successfully!',
+            'data' => $categories,
+            'result' => $categories,
+        ], 200);
+    }
 }

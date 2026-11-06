@@ -32,9 +32,11 @@ Route::prefix('vendor')->middleware(['auth:sanctum', 'user_type:2'])->group(func
     Route::put('/category', [CategoryController::class, 'updateCategory']);
     Route::delete('/category/{id}', [CategoryController::class, 'deleteCategory']);
     Route::get('/categories/panel', [CategoryController::class, 'categories']);
+    Route::get('/pos/categories', [CategoryController::class, 'posCategories']);
 
     // Product Routes
     Route::get('/products', [ProductController::class, 'index']);
+    Route::get('/pos/products', [ProductController::class, 'posProducts']);
     Route::post('/product/step1', [ProductController::class, 'createProductStep1']);
     Route::put('/product/type/update', [ProductController::class, 'updateProductType']);
     Route::get('/product/type/get/{id}', [ProductController::class, 'getProductType']);
