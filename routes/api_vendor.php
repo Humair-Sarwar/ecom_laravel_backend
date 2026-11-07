@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Vendor\AttributeController;
+use App\Http\Controllers\Vendor\AuthController as VendorAuthController;
 use App\Http\Controllers\Vendor\BrandController;
 use App\Http\Controllers\Vendor\CategoryController;
 use App\Http\Controllers\Vendor\MediaController;
@@ -11,7 +12,14 @@ use App\Http\Controllers\Vendor\TermController;
 use App\Models\SiteMenu;
 use Illuminate\Support\Facades\Route;
 
-Route::prefix('vendor')->middleware(['auth:sanctum', 'user_type:2'])->group(function (){
+// Public Vendor Auth Routes
+Route::prefix('vendor/auth')->group(function () {
+    Route::post('/login', [VendorAuthController::class, 'login']);
+});
+
+Route::prefix('vendor')->middleware(['auth:sanctum', 'user_type:2', 'set_tenant_schema'])->group(function (){
+    Route::get('/auth/me', [VendorAuthController::class, 'me']);
+    Route::post('/auth/logout', [VendorAuthController::class, 'logout']);
 
     // Brand Routes
     Route::controller(BrandController::class)->group(function () {
@@ -84,16 +92,16 @@ Route::prefix('vendor')->middleware(['auth:sanctum', 'user_type:2'])->group(func
 
     // Policies Routes
     Route::controller(PolicyController::class)->group(function () {
-        Route::get('/warranty-policy', 'warrantyPolicies');
-        Route::post('/warranty-policy/create', 'createWarrantyPolicy');
-        Route::put('/warranty-policy/{id}', 'updateWarrantyPolicy');
-        Route::delete('/warranty-policy/{id}', 'deleteWarranty');
+        Route::get('/warranty-policy', 'warrantyPolicies')->middleware('vendor_permission:policies_view,warranty_view');
+        Route::post('/warranty-policy/create', 'createWarrantyPolicy')->middleware('vendor_permission:warranty_add');
+        Route::put('/warranty-policy/{id}', 'updateWarrantyPolicy')->middleware('vendor_permission:warranty_update');
+        Route::delete('/warranty-policy/{id}', 'deleteWarranty')->middleware('vendor_permission:warranty_delete');
         Route::get('/warranties/panel', 'WarrantySelection');
 
-        Route::get('/return-policy', 'returnPolicies');
-        Route::post('/return-policy/create', 'createReturnPolicy');
-        Route::put('/return-policy/{id}', 'updateReturnPolicy');
-        Route::delete('/return-policy/{id}', 'deleteReturn');
+        Route::get('/return-policy', 'returnPolicies')->middleware('vendor_permission:policies_view,return_view');
+        Route::post('/return-policy/create', 'createReturnPolicy')->middleware('vendor_permission:return_add');
+        Route::put('/return-policy/{id}', 'updateReturnPolicy')->middleware('vendor_permission:return_update');
+        Route::delete('/return-policy/{id}', 'deleteReturn')->middleware('vendor_permission:return_delete');
         Route::get('/returns/panel', 'ReturnSelection');
     });
 

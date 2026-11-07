@@ -32,6 +32,11 @@ class User extends Authenticatable
         'dob',
         'country',
         'user_type',
+        'status',
+        'business_name',
+        'last_login_at',
+        'last_login_ip',
+        'last_login_device',
     ];
 
     /**
@@ -55,6 +60,8 @@ class User extends Authenticatable
             'password' => 'hashed',
             'dob' => 'date',
             'user_type' => 'integer',
+            'status' => 'boolean',
+            'last_login_at' => 'datetime',
         ];
     }
 }

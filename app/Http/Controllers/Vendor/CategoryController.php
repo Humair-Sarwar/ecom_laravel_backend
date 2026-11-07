@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Vendor;
 
 use App\Http\Controllers\Controller;
 use App\Models\Category;
+use App\Models\Product;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
@@ -388,5 +389,252 @@ private function deleteCategoryRecursive($category) {
             'data' => $categories,
             'result' => $categories,
         ], 200);
+    }
+
+    // Category details, cover image & child categories for Product Listing Page
+    public function websiteCategoryDetails(Request $request)
+    {
+        $categorySlug = $request->input('category');
+
+        if (!$categorySlug || $categorySlug === 'All') {
+            $childCategories = Category::where('is_active_for_buy', 1)
+                ->where('is_deleted', false)
+                ->where('level', 0)
+                ->whereNull('parent_category_id')
+                ->with(['media', 'coverMedia'])
+                ->orderBy('sort_order', 'asc')
+                ->get()
+                ->map(function ($child) {
+                    $mediaPath = optional($child->media)->media_path
+                        ?: optional($child->coverMedia)->media_path;
+                    return [
+                        'id' => $child->id,
+                        'name' => $child->title,
+                        'title' => $child->title,
+                        'slug' => $child->category_slug,
+                        'category_slug' => $child->category_slug,
+                        'image' => $mediaPath,
+                    ];
+                });
+
+            return response()->json([
+                'status' => true,
+                'parent_category' => [
+                    'id' => null,
+                    'name' => 'All Categories',
+                    'title' => 'All Categories',
+                    'slug' => 'All',
+                    'category_slug' => 'All',
+                    'cover_image' => null,
+                    'description' => '',
+                ],
+                'child_category' => $childCategories,
+            ], 200);
+        }
+
+        $category = Category::where('is_deleted', false)
+            ->where(function ($q) use ($categorySlug) {
+                $q->where('category_slug', $categorySlug)
+                  ->orWhere('id', $categorySlug);
+            })
+            ->with(['media', 'coverMedia', 'children.media', 'children.coverMedia'])
+            ->first();
+
+        if (!$category) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Category not found',
+                'parent_category' => null,
+                'child_category' => [],
+            ], 404);
+        }
+
+        $coverImagePath = optional($category->coverMedia)->media_path
+            ?: optional($category->media)->media_path;
+
+        $childCategories = $category->children()
+            ->where('is_active_for_buy', 1)
+            ->where('is_deleted', false)
+            ->with(['media', 'coverMedia'])
+            ->orderBy('sort_order', 'asc')
+            ->get()
+            ->map(function ($child) {
+                $mediaPath = optional($child->media)->media_path
+                    ?: optional($child->coverMedia)->media_path;
+
+                return [
+                    'id' => $child->id,
+                    'name' => $child->title,
+                    'title' => $child->title,
+                    'slug' => $child->category_slug,
+                    'category_slug' => $child->category_slug,
+                    'image' => $mediaPath,
+                ];
+            });
+
+        return response()->json([
+            'status' => true,
+            'parent_category' => [
+                'id' => $category->id,
+                'name' => $category->title,
+                'title' => $category->title,
+                'slug' => $category->category_slug,
+                'category_slug' => $category->category_slug,
+                'cover_image' => $coverImagePath,
+                'description' => $category->page_description ?? '',
+            ],
+            'child_category' => $childCategories,
+        ], 200);
+    }
+
+    // Products list for Website Category Page (including all inner level categories) with pagination
+    public function websiteCategoryProducts(Request $request)
+    {
+        $categorySlug = $request->input('category');
+        $page = max((int) $request->input('page', 1), 1);
+        $perPage = max((int) $request->input('per_page', 9), 1);
+
+        $query = Product::where('is_deleted', false)
+            ->where('is_published', true)
+            ->whereNull('parent_product_id')
+            ->with([
+                'category',
+                'brand',
+                'media',
+                'variationImage',
+                'variations' => function ($q) {
+                    $q->where('is_deleted', false)
+                        ->orderBy('is_default', 'desc')
+                        ->orderBy('created_at', 'asc')
+                        ->with(['media', 'variationImage', 'brand', 'category']);
+                },
+            ]);
+
+        // If a specific category is requested, filter by it and all its inner descendant subcategories
+        if ($categorySlug && $categorySlug !== 'All') {
+            $rootCategory = Category::where('is_deleted', false)
+                ->where(function ($q) use ($categorySlug) {
+                    $q->where('category_slug', $categorySlug)
+                      ->orWhere('id', $categorySlug);
+                })
+                ->first();
+
+            if ($rootCategory) {
+                $categoryIds = $this->getAllDescendantCategoryIds((string) $rootCategory->id);
+                $query->whereIn('category_id', $categoryIds);
+            } else {
+                return response()->json([
+                    'status' => true,
+                    'message' => 'No products found',
+                    'data' => [],
+                    'products' => [],
+                    'total' => 0,
+                    'current_page' => $page,
+                    'last_page' => 1,
+                    'per_page' => $perPage,
+                ], 200);
+            }
+        }
+
+        $paginated = $query
+            ->orderBy('sort_order', 'asc')
+            ->orderBy('created_at', 'desc')
+            ->paginate($perPage, ['*'], 'page', $page);
+
+        $formatted = collect($paginated->items())->map(function ($product) {
+            $isVariable = (int) ($product->product_type ?? 1) === 2;
+            $variations = $product->variations ?? collect();
+            $defaultVar = $variations->firstWhere('is_default', true) ?: $variations->first();
+
+            // Determine image
+            $imagePath = null;
+            if ($product->media && $product->media->isNotEmpty()) {
+                $imagePath = $product->media->first()->media_path;
+            } elseif ($product->variationImage) {
+                $imagePath = $product->variationImage->media_path;
+            } elseif ($defaultVar) {
+                if ($defaultVar->media && $defaultVar->media->isNotEmpty()) {
+                    $imagePath = $defaultVar->media->first()->media_path;
+                } elseif ($defaultVar->variationImage) {
+                    $imagePath = $defaultVar->variationImage->media_path;
+                }
+            }
+
+            // Determine prices
+            $regularPrice = (float) ($product->regular_price ?? 0);
+            $salePrice = (float) ($product->sale_price ?? 0);
+
+            if ($isVariable && $defaultVar) {
+                $regularPrice = (float) ($defaultVar->regular_price ?? $regularPrice);
+                $salePrice = (float) ($defaultVar->sale_price ?? $salePrice);
+            }
+
+            $currentPrice = ($salePrice > 0) ? $salePrice : $regularPrice;
+            $originalPrice = ($salePrice > 0 && $regularPrice > $salePrice) ? $regularPrice : null;
+            $saveAmount = ($originalPrice && $currentPrice) ? ($originalPrice - $currentPrice) : 0;
+
+            // Brand name
+            $brandName = optional($product->brand)->title ?? 'Apple';
+
+            return [
+                'id' => $product->id,
+                'slug' => $product->product_slug,
+                'product_slug' => $product->product_slug,
+                'title' => $product->title,
+                'name' => $product->title,
+                'brand' => $brandName,
+                'category_id' => $product->category_id,
+                'category_name' => optional($product->category)->title,
+                'image' => $imagePath,
+                'price' => number_format($currentPrice, 2, '.', ''),
+                'regular_price' => $regularPrice > 0 ? number_format($regularPrice, 2, '.', '') : null,
+                'sale_price' => $salePrice > 0 ? number_format($salePrice, 2, '.', '') : null,
+                'original_price' => $originalPrice ? number_format($originalPrice, 2, '.', '') : null,
+                'save_amount' => $saveAmount > 0 ? number_format($saveAmount, 2, '.', '') : null,
+                'is_variable' => $isVariable,
+                'product_type' => (int) ($product->product_type ?? 1),
+            ];
+        });
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Products fetched successfully',
+            'data' => $formatted,
+            'products' => $formatted,
+            'total' => $paginated->total(),
+            'current_page' => $paginated->currentPage(),
+            'last_page' => $paginated->lastPage(),
+            'per_page' => $paginated->perPage(),
+        ], 200);
+    }
+
+    // Helper to recursively get all descendant category IDs
+    protected function getAllDescendantCategoryIds(string $rootCategoryId): array
+    {
+        $allCategories = Category::where('is_deleted', false)
+            ->get(['id', 'parent_category_id']);
+
+        $childrenByParent = [];
+        foreach ($allCategories as $cat) {
+            $parentId = (string) ($cat->parent_category_id ?? '');
+            $childrenByParent[$parentId][] = (string) $cat->id;
+        }
+
+        $resultIds = [$rootCategoryId];
+        $queue = [$rootCategoryId];
+
+        while (!empty($queue)) {
+            $currentId = array_shift($queue);
+            if (!empty($childrenByParent[$currentId])) {
+                foreach ($childrenByParent[$currentId] as $childId) {
+                    if (!in_array($childId, $resultIds, true)) {
+                        $resultIds[] = $childId;
+                        $queue[] = $childId;
+                    }
+                }
+            }
+        }
+
+        return $resultIds;
     }
 }

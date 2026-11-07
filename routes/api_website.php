@@ -13,4 +13,6 @@ Route::prefix('website')->group(function (){
 
     Route::get('/menu-json', [SiteMenuController::class, 'siteMenuGet']);
     Route::get('/categories', [CategoryController::class, 'websiteCategories']);
+    Route::get('/products/filter', [CategoryController::class, 'websiteCategoryDetails']);
+    Route::get('/category/products', [CategoryController::class, 'websiteCategoryProducts']);
 });
