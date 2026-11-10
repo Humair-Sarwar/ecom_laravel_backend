@@ -4,6 +4,7 @@ namespace App\Http\Controllers\SystemUser;
 
 use App\Http\Controllers\Controller;
 use App\Models\Business;
+use App\Models\BusinessGroup;
 use App\Models\User;
 use App\Models\Role;
 use App\Models\Country;
@@ -35,9 +36,9 @@ class BusinessController extends Controller
 
         // Build base query
         if ($tab === 'deleted') {
-            $query = Business::onlyTrashed()->with(['owner', 'role', 'country', 'city']);
+            $query = Business::onlyTrashed()->with(['owner', 'role', 'country', 'city', 'group']);
         } else {
-            $query = Business::with(['owner', 'role', 'country', 'city']);
+            $query = Business::with(['owner', 'role', 'country', 'city', 'group']);
 
             if ($tab === 'active') {
                 $query->where('status', 'active');
@@ -180,6 +181,12 @@ class BusinessController extends Controller
             ['code' => 'AUD', 'name' => 'Australian Dollar ($)'],
         ];
 
+        // Active business groups for group dropdown
+        $businessGroups = BusinessGroup::where('status', 'active')
+            ->select('id', 'name', 'owner_id')
+            ->orderBy('name', 'asc')
+            ->get();
+
         return response()->json([
             'status' => true,
             'data' => [
@@ -190,6 +197,7 @@ class BusinessController extends Controller
                 'existing_schemas' => $existingSchemas,
                 'business_types' => $businessTypes,
                 'currencies' => $currencies,
+                'business_groups' => $businessGroups,
             ],
         ]);
     }
@@ -225,6 +233,7 @@ class BusinessController extends Controller
             'latitude' => 'nullable|string|max:50',
             'longitude' => 'nullable|string|max:50',
             'description' => 'nullable|string',
+            'business_group_id' => 'nullable|integer',
         ], [
             'services.required' => 'Please select at least one enabled service.',
             'services.min' => 'Please select at least one enabled service.',
@@ -301,7 +310,7 @@ class BusinessController extends Controller
      */
     public function show($id)
     {
-        $business = Business::withTrashed()->with(['owner', 'role', 'country', 'city'])->find($id);
+        $business = Business::withTrashed()->with(['owner', 'role', 'country', 'city', 'group'])->find($id);
 
         if (!$business) {
             return response()->json([
@@ -356,6 +365,7 @@ class BusinessController extends Controller
             'latitude' => 'nullable|string|max:50',
             'longitude' => 'nullable|string|max:50',
             'description' => 'nullable|string',
+            'business_group_id' => 'nullable|integer',
         ], [
             'services.required' => 'Please select at least one enabled service.',
             'services.min' => 'Please select at least one enabled service.',

@@ -6,6 +6,7 @@ use App\Http\Controllers\SystemUser\CountryController;
 use App\Http\Controllers\SystemUser\CityController;
 use App\Http\Controllers\SystemUser\UserController;
 use App\Http\Controllers\SystemUser\BusinessController;
+use App\Http\Controllers\SystemUser\BusinessGroupController;
 use App\Http\Controllers\SystemUser\DashboardController;
 use Illuminate\Support\Facades\Route;
 
@@ -62,4 +63,14 @@ Route::prefix('systemuser')->middleware(['auth:sanctum', 'user_type:3'])->group(
     Route::put('/businesses/{id}', [BusinessController::class, 'update']);
     Route::patch('/businesses/{id}/toggle-block', [BusinessController::class, 'toggleBlock']);
     Route::delete('/businesses/{id}', [BusinessController::class, 'destroy']);
+
+    // Business Groups Management
+    Route::get('/business-groups/owners', [BusinessGroupController::class, 'searchOwners']);
+    Route::get('/business-groups/businesses', [BusinessGroupController::class, 'businesses']);
+    Route::get('/business-groups', [BusinessGroupController::class, 'index']);
+    Route::post('/business-groups', [BusinessGroupController::class, 'store']);
+    Route::get('/business-groups/{id}', [BusinessGroupController::class, 'show']);
+    Route::put('/business-groups/{id}', [BusinessGroupController::class, 'update']);
+    Route::patch('/business-groups/{id}/toggle-status', [BusinessGroupController::class, 'toggleStatus']);
+    Route::delete('/business-groups/{id}', [BusinessGroupController::class, 'destroy']);
 });

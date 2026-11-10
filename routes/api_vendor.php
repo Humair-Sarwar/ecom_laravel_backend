@@ -19,6 +19,7 @@ Route::prefix('vendor/auth')->group(function () {
 
 Route::prefix('vendor')->middleware(['auth:sanctum', 'user_type:2', 'set_tenant_schema'])->group(function (){
     Route::get('/auth/me', [VendorAuthController::class, 'me']);
+    Route::post('/auth/switch-business', [VendorAuthController::class, 'switchBusiness']);
     Route::post('/auth/logout', [VendorAuthController::class, 'logout']);
 
     // Brand Routes
@@ -111,5 +112,61 @@ Route::prefix('vendor')->middleware(['auth:sanctum', 'user_type:2', 'set_tenant_
         Route::get('/menu-json', 'getVendorMenu');
         Route::patch('/menu-json', 'save');
         
+    });
+
+    // Inventory Routes (Lab Items & Lab Item Usages)
+    Route::controller(\App\Http\Controllers\Vendor\InventoryController::class)->group(function () {
+        Route::get('/inventory/lab-items', 'labItems');
+        Route::post('/inventory/lab-items', 'createLabItem');
+        Route::get('/inventory/lab-items/{id}', 'showLabItem');
+        Route::put('/inventory/lab-items/{id}', 'updateLabItem');
+        Route::delete('/inventory/lab-items/{id}', 'deleteLabItem');
+        Route::post('/inventory/lab-items/{id}/adjust-stock', 'adjustStock');
+        Route::post('/inventory/lab-items/batch-update-category', 'batchUpdateCategory');
+
+        Route::get('/inventory/lab-item-usages', 'labItemUsages');
+        Route::post('/inventory/lab-item-usages', 'createLabItemUsage');
+    });
+
+    // Purchases & Suppliers Routes
+    Route::controller(\App\Http\Controllers\Vendor\SupplierController::class)->group(function () {
+        Route::get('/purchases/suppliers', 'index');
+        Route::post('/purchases/suppliers', 'store');
+        Route::get('/purchases/suppliers/{id}', 'show');
+        Route::put('/purchases/suppliers/{id}', 'update');
+        Route::delete('/purchases/suppliers/{id}', 'destroy');
+    });
+
+    // Supplier Ledger & Payment Routes
+    Route::controller(\App\Http\Controllers\Vendor\SupplierLedgerController::class)->group(function () {
+        Route::get('/purchases/payments', 'purchasePayments');
+        Route::get('/purchases/suppliers/{id}/ledger', 'index');
+        Route::post('/purchases/suppliers/{id}/make-payment', 'makePayment');
+        Route::post('/purchases/suppliers/{id}/add-previous-balance', 'addPreviousBalance');
+        Route::put('/purchases/suppliers/{id}/update-last-payment', 'updateLastPayment');
+        Route::delete('/purchases/suppliers/{id}/delete-payment/{paymentId}', 'deletePayment');
+    });
+
+    // Purchase Order Routes
+    Route::controller(\App\Http\Controllers\Vendor\PurchaseOrderController::class)->group(function () {
+        Route::get('/purchases/orders', 'index');
+        Route::get('/purchases/drafts', 'drafts');
+        Route::delete('/purchases/drafts/{id}', 'destroyDraft');
+        Route::get('/purchases/orders/search-products', 'searchProducts');
+        Route::get('/purchases/orders/check-imei', 'checkImei');
+        Route::post('/purchases/orders', 'store');
+        Route::get('/purchases/orders/by-order-no/{orderNo}', 'showByOrderNo');
+        Route::post('/purchases/orders/batch-by-nos', 'getMultipleOrders');
+        Route::get('/purchases/orders/{id}', 'show');
+        Route::put('/purchases/orders/{id}', 'update');
+        Route::post('/purchases/orders/{id}/fulfill', 'receiveItems');
+    });
+
+    // Purchase Return Orders Routes
+    Route::controller(\App\Http\Controllers\Vendor\PurchaseReturnController::class)->group(function () {
+        Route::get('/purchases/returns', 'index');
+        Route::get('/purchases/returns/lookup-receipt', 'lookupReceipt');
+        Route::post('/purchases/returns', 'store');
+        Route::get('/purchases/returns/{id}', 'show');
     });
 });

@@ -4,6 +4,7 @@ namespace App\Http\Middleware;
 
 use Closure;
 use App\Models\Business;
+use App\Models\BusinessGroup;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
@@ -29,7 +30,50 @@ class SetTenantSchemaMiddleware
 
         // If user is a vendor (user_type == 2)
         if ((int) $user->user_type === 2) {
-            $business = Business::where('owner_id', $user->id)->first();
+            $ownedGroupIds = BusinessGroup::where('owner_id', $user->id)
+                ->where('status', 'active')
+                ->pluck('id');
+
+            $accessibleQuery = Business::where(function ($q) use ($user, $ownedGroupIds) {
+                $q->where('owner_id', $user->id);
+                if ($ownedGroupIds->isNotEmpty()) {
+                    $q->orWhereIn('business_group_id', $ownedGroupIds);
+                }
+            });
+
+            $accessibleBusinesses = (clone $accessibleQuery)->orderBy('id', 'asc')->get();
+
+            // Determine requested business ID: X-Business-Id header > Sanctum token ability ('business:<id>')
+            $requestedBusinessId = null;
+            $headerBizId = $request->header('X-Business-Id');
+            if ($headerBizId !== null && $headerBizId !== '' && ctype_digit((string) $headerBizId)) {
+                $requestedBusinessId = (int) $headerBizId;
+            }
+
+            $tokenBizId = null;
+            $token = $user->currentAccessToken();
+            if ($token instanceof \Laravel\Sanctum\PersonalAccessToken && is_array($token->abilities)) {
+                foreach ($token->abilities as $ability) {
+                    if (is_string($ability) && str_starts_with($ability, 'business:')) {
+                        $parsed = substr($ability, 9);
+                        if (ctype_digit($parsed)) {
+                            $tokenBizId = (int) $parsed;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            $business = null;
+            if ($requestedBusinessId) {
+                $business = $accessibleBusinesses->firstWhere('id', $requestedBusinessId);
+            }
+            if (!$business && $tokenBizId) {
+                $business = $accessibleBusinesses->firstWhere('id', $tokenBizId);
+            }
+            if (!$business) {
+                $business = $accessibleBusinesses->firstWhere('status', 'active') ?: $accessibleBusinesses->first();
+            }
 
             // If business does not exist or was soft-deleted
             if (!$business) {

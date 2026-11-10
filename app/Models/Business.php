@@ -14,6 +14,7 @@ class Business extends Model
 
     protected $fillable = [
         'owner_id',
+        'business_group_id',
         'role_id',
         'role_title',
         'name',
@@ -51,6 +52,14 @@ class Business extends Model
         'updated_at' => 'datetime',
         'deleted_at' => 'datetime',
     ];
+
+    /**
+     * Business group relation
+     */
+    public function group()
+    {
+        return $this->belongsTo(BusinessGroup::class, 'business_group_id');
+    }
 
     /**
      * Business owner user relation
