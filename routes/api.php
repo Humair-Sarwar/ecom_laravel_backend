@@ -13,3 +13,6 @@ require base_path('routes/api_website.php');
 
 // Include Vendor API routes
 require base_path('routes/api_vendor.php');
+
+// Include System User API routes
+require base_path('routes/api_systemuser.php');

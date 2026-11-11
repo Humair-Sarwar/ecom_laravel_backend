@@ -10,10 +10,10 @@ use Illuminate\Support\Facades\Validator;
 class MediaController extends Controller
 {
     public function index(Request $request){
-        $perPage = $request->per_page ?? 10;
+        $perPage = max(1, min((int) ($request->per_page ?? 10), 100));
         $query = Media::where('business_id', auth()->user()->id);
         $medias = $query->orderBy('created_at', 'desc')->paginate($perPage);
-        $from = ($medias->currentPage() - 1) * $medias->perPage() + 1;
+        $from = $medias->total() > 0 ? (($medias->currentPage() - 1) * $medias->perPage() + 1) : 0;
         $to = min($medias->currentPage() * $medias->perPage(), $medias->total());
         return response()->json([
             'status' => true,

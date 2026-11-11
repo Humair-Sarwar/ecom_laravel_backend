@@ -15,6 +15,23 @@ class Product extends Model
     use HasUuids, HasApiTokens;
 
     protected $guarded = [];
+
+    protected $casts = [
+        'is_default' => 'integer',
+        'is_published' => 'integer',
+        'is_deleted' => 'boolean',
+        'is_web' => 'integer',
+        'is_pos' => 'integer',
+        'stock_quantity' => 'integer',
+        'is_serialized' => 'boolean',
+    ];
+
+    public function defaultVariation()
+    {
+        return $this->hasOne(Product::class, 'parent_product_id')
+            ->where('is_default', 1)
+            ->where('is_deleted', false);
+    }
     
     public function media()
     {
@@ -40,6 +57,17 @@ class Product extends Model
 
     public function brand(){
         return $this->belongsTo(Brand::class);
+    }
+
+    public function variations()
+    {
+        return $this->hasMany(Product::class, 'parent_product_id')
+            ->where('is_deleted', false);
+    }
+
+    public function parentProduct()
+    {
+        return $this->belongsTo(Product::class, 'parent_product_id');
     }
 
     protected static function booted()

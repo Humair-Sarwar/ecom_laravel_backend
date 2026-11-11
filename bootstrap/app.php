@@ -1,6 +1,8 @@
 <?php
 
 use App\Http\Middleware\UserTypeMiddleware;
+use App\Http\Middleware\SetTenantSchemaMiddleware;
+use App\Http\Middleware\CheckVendorPermissionMiddleware;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -14,8 +16,10 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
-        'user_type' => UserTypeMiddleware::class,
-    ]);
+            'user_type' => UserTypeMiddleware::class,
+            'set_tenant_schema' => SetTenantSchemaMiddleware::class,
+            'vendor_permission' => CheckVendorPermissionMiddleware::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

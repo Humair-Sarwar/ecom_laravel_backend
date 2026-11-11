@@ -1,4 +1,6 @@
 <?php
+use App\Http\Controllers\Vendor\CategoryController;
+use App\Http\Controllers\Vendor\SiteMenuController;
 use App\Http\Controllers\Website\UserController;
 use Illuminate\Support\Facades\Route;
 
@@ -8,4 +10,9 @@ Route::prefix('website')->group(function (){
     Route::post('/register', [UserController::class, 'register']);
     Route::post('/login', [UserController::class, 'login']);
     Route::post('/logout', [UserController::class, 'logout'])->middleware('auth:sanctum');
+
+    Route::get('/menu-json', [SiteMenuController::class, 'siteMenuGet']);
+    Route::get('/categories', [CategoryController::class, 'websiteCategories']);
+    Route::get('/products/filter', [CategoryController::class, 'websiteCategoryDetails']);
+    Route::get('/category/products', [CategoryController::class, 'websiteCategoryProducts']);
 });

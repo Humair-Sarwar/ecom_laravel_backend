@@ -26,12 +26,23 @@ class User extends Authenticatable
     protected $fillable = [
         'first_name',
         'last_name',
+        'gender',
         'email',
         'password',
         'phone',
+        'phone_country_code',
+        'alt_phone_country_code',
+        'alternative_phone',
+        'profile_image',
+        'auto_submit_eod',
         'dob',
         'country',
         'user_type',
+        'status',
+        'business_name',
+        'last_login_at',
+        'last_login_ip',
+        'last_login_device',
     ];
 
     /**
@@ -55,6 +66,9 @@ class User extends Authenticatable
             'password' => 'hashed',
             'dob' => 'date',
             'user_type' => 'integer',
+            'status' => 'boolean',
+            'auto_submit_eod' => 'boolean',
+            'last_login_at' => 'datetime',
         ];
     }
 }
