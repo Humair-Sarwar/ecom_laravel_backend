@@ -248,11 +248,26 @@ class ProductController extends Controller
                 ], 422);
             }
             $query->update($request->all());
-            $data = $query->fresh();
+            $data = $query->fresh(['category', 'brand', 'media', 'variationImage']);
+            $mediaPath = optional($data->media->first())->media_path ?: optional($data->variationImage)->media_path;
+            $stockItems = [[
+                'id' => $data->id,
+                'type' => 'product',
+                'name' => trim((string) $data->title) ?: ($data->product_sku ? 'Product ' . $data->product_sku : 'Product Item'),
+                'sku' => $data->product_sku,
+                'barcode' => $data->product_sku,
+                'condition' => $data->condition,
+                'category_name' => optional($data->category)->title ?: 'Uncategorized',
+                'brand_name' => optional($data->brand)->title ?: 'No Brand',
+                'is_serialized' => (bool) $data->is_serialized,
+                'image' => $mediaPath ? asset('storage/' . ltrim($mediaPath, '/')) : null,
+            ]];
+
             return response()->json([
                 'status' => true,
                 'message' => 'Step 2 created successfully!',
-                'data' => $data
+                'data' => $data,
+                'stock_items' => $stockItems,
             ], 200);
         }
 
@@ -267,16 +282,48 @@ class ProductController extends Controller
                 'is_published' => $isPublished,
             ]);
 
-            // Sync publication status to all child variations
+            // Sync publication & stock/serialization settings to all child variations
             Product::where('parent_product_id', $query->id)
                 ->where('is_deleted', false)
-                ->update(['is_published' => $isPublished]);
+                ->update([
+                    'is_published' => $isPublished,
+                    'is_serialized' => (bool) $query->is_serialized,
+                    'apply_stock_strictly' => (bool) $query->apply_stock_strictly,
+                    'get_stock_alert' => (bool) $query->get_stock_alert,
+                ]);
 
-            $data = $query->fresh();
+            $data = $query->fresh(['category', 'brand', 'media']);
+            $variations = Product::where('parent_product_id', $query->id)
+                ->where('is_deleted', false)
+                ->with(['variationImage'])
+                ->get();
+
+            $parentCat = optional($data->category)->title ?: 'Uncategorized';
+            $parentBrand = optional($data->brand)->title ?: 'No Brand';
+            $parentMedia = optional($data->media->first())->media_path;
+
+            $stockItems = $variations->map(function ($v) use ($data, $parentCat, $parentBrand, $parentMedia) {
+                $varMedia = optional($v->variationImage)->media_path ?: $parentMedia;
+                $varTitle = trim((string) $v->title) ?: trim((string) $data->title) ?: ($v->product_sku ? 'Product ' . $v->product_sku : 'Variation Item');
+                return [
+                    'id' => $v->id,
+                    'type' => 'product',
+                    'name' => $varTitle,
+                    'sku' => $v->product_sku,
+                    'barcode' => $v->product_sku,
+                    'condition' => $v->condition ?? $data->condition,
+                    'category_name' => $parentCat,
+                    'brand_name' => $parentBrand,
+                    'is_serialized' => (bool) ($v->is_serialized || $data->is_serialized),
+                    'image' => $varMedia ? asset('storage/' . ltrim($varMedia, '/')) : null,
+                ];
+            })->values()->all();
+
             return response()->json([
                 'status' => true,
                 'message' => 'Variable Product Step 2 saved successfully!',
-                'data' => $data
+                'data' => $data,
+                'stock_items' => $stockItems,
             ], 200);
         }
 
@@ -350,6 +397,15 @@ class ProductController extends Controller
         $data['product_slug'] = $request->title;
 
         $product->update($data);
+
+        // Sync stock/serialization flags to existing child variations if any
+        Product::where('parent_product_id', $product->id)
+            ->where('is_deleted', false)
+            ->update([
+                'is_serialized' => (bool) $product->is_serialized,
+                'apply_stock_strictly' => (bool) $product->apply_stock_strictly,
+                'get_stock_alert' => (bool) $product->get_stock_alert,
+            ]);
 
         if ($request->filled('product_image_ids')) {
             $product->media()->sync(
@@ -685,7 +741,10 @@ class ProductController extends Controller
                     'regular_price' => 0,
                     'sale_price' => 0,
                     'product_status_stock' => 1,
-                    'is_published' => 0, 
+                    'is_published' => 0,
+                    'apply_stock_strictly' => (bool) $parentProduct->apply_stock_strictly,
+                    'get_stock_alert' => (bool) $parentProduct->get_stock_alert,
+                    'is_serialized' => (bool) $parentProduct->is_serialized,
                     'meta_title' => $parentProduct->meta_title,
                     'meta_description' => $parentProduct->meta_description,
                     'keywords' => $parentProduct->keywords,
@@ -748,8 +807,9 @@ class ProductController extends Controller
         $from = ($variations->currentPage() - 1) * $variations->perPage() + 1;
         $to = min($variations->currentPage() * $variations->perPage(), $variations->total());
 
-        $variations->getCollection()->transform(function ($variation) {
+        $variations->getCollection()->transform(function ($variation) use ($parentProduct) {
             $variation->is_default = ((int) $variation->is_default === 1 || $variation->is_default === true) ? 1 : 0;
+            $variation->is_serialized = (bool) ($variation->is_serialized || ($parentProduct->is_serialized ?? false));
             $terms = DB::table('product_variation_term_mappings')
                 ->join('terms', 'product_variation_term_mappings.term_id', '=', 'terms.id')
                 ->join('attributes', 'terms.attribute_id', '=', 'attributes.id')

@@ -162,11 +162,59 @@ Route::prefix('vendor')->middleware(['auth:sanctum', 'user_type:2', 'set_tenant_
         Route::post('/purchases/orders/{id}/fulfill', 'receiveItems');
     });
 
+    // Account Settings Routes
+    Route::controller(\App\Http\Controllers\Vendor\AccountSettingController::class)->group(function () {
+        Route::get('/settings/account', 'show');
+        Route::post('/settings/account', 'update');
+        Route::post('/settings/account/change-password', 'changePassword');
+    });
+
+    // Business Settings Routes
+    Route::controller(\App\Http\Controllers\Vendor\BusinessSettingController::class)->group(function () {
+        Route::get('/settings/business/general', 'showGeneral');
+        Route::post('/settings/business/general', 'updateGeneral');
+
+        Route::get('/settings/business/pos/terms', 'posTerms');
+        Route::post('/settings/business/pos/terms', 'storePosTerm');
+        Route::put('/settings/business/pos/terms/{id}', 'updatePosTerm');
+        Route::patch('/settings/business/pos/terms/{id}/toggle-default', 'toggleDefaultPosTerm');
+        Route::delete('/settings/business/pos/terms/{id}', 'deletePosTerm');
+
+        Route::get('/settings/business/pos/order-types', 'posOrderTypes');
+        Route::post('/settings/business/pos/order-types', 'storePosOrderType');
+        Route::put('/settings/business/pos/order-types/{id}', 'updatePosOrderType');
+        Route::patch('/settings/business/pos/order-types/{id}/toggle-default', 'toggleDefaultPosOrderType');
+        Route::delete('/settings/business/pos/order-types/{id}', 'deletePosOrderType');
+
+        Route::get('/settings/business/pos/order-processes', 'posOrderProcesses');
+        Route::post('/settings/business/pos/order-processes', 'storePosOrderProcess');
+        Route::put('/settings/business/pos/order-processes/{id}', 'updatePosOrderProcess');
+        Route::patch('/settings/business/pos/order-processes/{id}/toggle-default', 'toggleDefaultPosOrderProcess');
+        Route::delete('/settings/business/pos/order-processes/{id}', 'deletePosOrderProcess');
+
+        Route::get('/settings/business/expense-types', 'expenseTypes');
+        Route::post('/settings/business/expense-types', 'storeExpenseType');
+        Route::put('/settings/business/expense-types/{id}', 'updateExpenseType');
+        Route::patch('/settings/business/expense-types/{id}/toggle-default', 'toggleDefaultExpenseType');
+        Route::delete('/settings/business/expense-types/{id}', 'deleteExpenseType');
+
+        Route::get('/settings/business/email', 'showEmailSettings');
+        Route::post('/settings/business/email', 'updateEmailSettings');
+    });
+
     // Purchase Return Orders Routes
     Route::controller(\App\Http\Controllers\Vendor\PurchaseReturnController::class)->group(function () {
         Route::get('/purchases/returns', 'index');
         Route::get('/purchases/returns/lookup-receipt', 'lookupReceipt');
         Route::post('/purchases/returns', 'store');
         Route::get('/purchases/returns/{id}', 'show');
+    });
+
+    // Daily Expenses Routes
+    Route::controller(\App\Http\Controllers\Vendor\DailyExpenseController::class)->group(function () {
+        Route::get('/expenses/daily', 'index');
+        Route::post('/expenses/daily', 'store');
+        Route::put('/expenses/daily/{id}', 'update');
+        Route::delete('/expenses/daily/{id}', 'destroy');
     });
 });

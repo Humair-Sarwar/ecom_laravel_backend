@@ -168,6 +168,7 @@ class AuthController extends Controller
                         'first_name' => $user->first_name,
                         'last_name' => $user->last_name,
                         'email' => $user->email,
+                        'business_name' => $user->business_name,
                         'user_type' => (int) $user->user_type,
                     ],
                 ], 200);
@@ -214,6 +215,7 @@ class AuthController extends Controller
                 'first_name' => $user->first_name,
                 'last_name' => $user->last_name,
                 'email' => $user->email,
+                'business_name' => $user->business_name,
                 'user_type' => (int) $user->user_type,
             ],
             'business' => $businessInfo,
@@ -261,6 +263,7 @@ class AuthController extends Controller
                 'first_name' => $user->first_name,
                 'last_name' => $user->last_name,
                 'email' => $user->email,
+                'business_name' => $user->business_name,
                 'user_type' => (int) $user->user_type,
             ],
             'business' => $businessInfo,

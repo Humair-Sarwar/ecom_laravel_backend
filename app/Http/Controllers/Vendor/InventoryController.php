@@ -291,6 +291,13 @@ class InventoryController extends Controller
             ], 404);
         }
 
+        if ((int) $item->stock > 0) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Cannot delete lab item with stock greater than zero',
+            ], 422);
+        }
+
         $item->is_deleted = true;
         $item->save();
 

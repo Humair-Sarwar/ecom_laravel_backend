@@ -546,6 +546,26 @@ class TenantSchemaService
             $tablesCreated[] = 'purchase_return_items';
         }
 
+        // 24. Provision 'daily_expenses' table
+        if (!$tenantSchema->hasTable('daily_expenses')) {
+            $tenantSchema->create('daily_expenses', function (Blueprint $table) {
+                $table->uuid('id')->primary();
+                $table->unsignedBigInteger('business_id')->index();
+                $table->uuid('expense_type_id')->nullable()->index();
+                $table->string('expense_type_name', 255);
+                $table->date('expense_date')->index();
+                $table->decimal('amount', 15, 2)->default(0.00);
+                $table->string('transaction_type', 30)->default('cash')->index();
+                $table->text('description')->nullable();
+                $table->boolean('in_store_payment')->default(false);
+                $table->uuid('created_by')->nullable();
+                $table->string('created_by_name', 150)->nullable();
+                $table->boolean('is_deleted')->default(false)->index();
+                $table->timestamps();
+            });
+            $tablesCreated[] = 'daily_expenses';
+        }
+
         return [
             'success' => true,
             'schema_name' => $schemaName,

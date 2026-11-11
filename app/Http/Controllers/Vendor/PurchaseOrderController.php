@@ -24,7 +24,7 @@ class PurchaseOrderController extends Controller
 
         $query = PurchaseOrder::where('business_id', $businessId)
             ->where('is_deleted', false)
-            ->with(['supplier', 'items']);
+            ->with(['supplier', 'items.product.parentProduct']);
 
         // Filter by status: when omitted on Purchase Orders, exclude unfinished drafts
         if ($request->filled('status')) {
@@ -102,6 +102,18 @@ class PurchaseOrderController extends Controller
                 }
             }
 
+            $poArray['items'] = $po->items->map(function ($item) {
+                $itemArr = $item->toArray();
+                unset($itemArr['product']);
+                $prod = $item->product;
+                $parentProd = $prod ? $prod->parentProduct : null;
+                $itemArr['is_serialized'] = (bool) (
+                    ($prod && $prod->is_serialized) ||
+                    ($parentProd && $parentProd->is_serialized) ||
+                    !empty(trim((string) $item->imei_serial_no))
+                );
+                return $itemArr;
+            })->values()->all();
             $poArray['payment_breakdown'] = $paymentBreakdown;
             $poArray['items_count'] = count($poArray['items'] ?? []);
             $poArray['section'] = 'purchase-order';
@@ -295,7 +307,7 @@ class PurchaseOrderController extends Controller
                 'regular_price' => $regularPrice,
                 'sale_price' => $salePrice,
                 'is_on_sale' => $isOnSale,
-                'is_serialized' => (bool) ($prod->is_serialized ?? ($prod->parentProduct ? $prod->parentProduct->is_serialized : false)),
+                'is_serialized' => (bool) ($prod->is_serialized || ($prod->parentProduct && $prod->parentProduct->is_serialized)),
                 'selling_price' => $sellingPrice,
                 'condition' => $conditionFormatted,
                 'category_name' => $categoryName,
