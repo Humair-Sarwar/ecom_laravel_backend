@@ -11,11 +11,14 @@ use Illuminate\Validation\Rule;
 class BrandController extends Controller
 {
     public function index(Request $request){
-        $search = $request->search;
-        $perPage = $request->per_page ?? 10;
+        $search = trim((string) $request->search);
+        $perPage = max(1, (int) ($request->per_page ?? 10));
         $query = Brand::where('business_id', auth()->user()->id)->where('is_deleted', false)->with('media');
-        if($search){
-            $query->where('title', 'like', "%{$search}%");
+        if ($search !== '') {
+            $query->where(function ($q) use ($search) {
+                $q->where('title', 'ilike', "%{$search}%")
+                  ->orWhere('slug', 'ilike', "%{$search}%");
+            });
         }
 
         $brands = $query->orderBy('sort_order')->paginate($perPage);
@@ -183,10 +186,13 @@ class BrandController extends Controller
 
     // Brands selection in panel
     public function brands(Request $request){
-        $search = $request->search;
+        $search = trim((string) $request->search);
         $query = Brand::where('business_id', auth()->user()->id)->where('is_deleted', false)->where('status', true)->with('media');
-        if($search){
-            $query->where('title', 'like', "%{$search}%");
+        if ($search !== '') {
+            $query->where(function ($q) use ($search) {
+                $q->where('title', 'ilike', "%{$search}%")
+                  ->orWhere('slug', 'ilike', "%{$search}%");
+            });
         }
         $brands = $query->orderBy('sort_order')->get();
         return response()->json([

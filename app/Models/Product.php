@@ -24,6 +24,7 @@ class Product extends Model
         'is_pos' => 'integer',
         'stock_quantity' => 'integer',
         'is_serialized' => 'boolean',
+        'specs' => 'array',
     ];
 
     public function defaultVariation()

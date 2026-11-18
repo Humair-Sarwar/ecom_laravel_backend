@@ -6,7 +6,9 @@ use App\Http\Controllers\Vendor\BrandController;
 use App\Http\Controllers\Vendor\CategoryController;
 use App\Http\Controllers\Vendor\MediaController;
 use App\Http\Controllers\vendor\PolicyController;
+use App\Http\Controllers\Vendor\PosCartController;
 use App\Http\Controllers\Vendor\ProductController;
+use App\Http\Controllers\Vendor\ProductOptionController;
 use App\Http\Controllers\Vendor\SiteMenuController;
 use App\Http\Controllers\Vendor\TermController;
 use App\Models\SiteMenu;
@@ -46,6 +48,25 @@ Route::prefix('vendor')->middleware(['auth:sanctum', 'user_type:2', 'set_tenant_
     // Product Routes
     Route::get('/products', [ProductController::class, 'index']);
     Route::get('/pos/products', [ProductController::class, 'posProducts']);
+    Route::post('/pos/quick-add-product', [ProductController::class, 'quickAddPosProduct']);
+    Route::post('/pos/update-product', [ProductController::class, 'updatePosProduct']);
+    Route::post('/pos/update-price', [ProductController::class, 'updatePosPrice']);
+    Route::get('/pos/product-stock-history/{id}', [ProductController::class, 'getPosProductStockHistory']);
+    Route::post('/pos/adjust-product-stock', [ProductController::class, 'adjustPosProductStock']);
+    Route::post('/pos/update-barcode', [ProductController::class, 'updatePosBarcode']);
+    Route::post('/pos/delete-barcode', [ProductController::class, 'deletePosBarcode']);
+
+    // POS Cart & Order Process Routes
+    Route::get('/pos/cart', [PosCartController::class, 'getCart']);
+    Route::post('/pos/cart/new', [PosCartController::class, 'createOrder']);
+    Route::post('/pos/cart/add', [PosCartController::class, 'addItem']);
+    Route::patch('/pos/cart/items/{itemId}', [PosCartController::class, 'updateItem']);
+    Route::delete('/pos/cart/items/{itemId}', [PosCartController::class, 'removeItem']);
+    Route::delete('/pos/cart', [PosCartController::class, 'clearCart']);
+    Route::post('/pos/cart/save-status', [PosCartController::class, 'saveStatus']);
+    Route::get('/pos/orders', [PosCartController::class, 'listOrders']);
+    Route::post('/pos/orders/{id}/load-to-cart', [PosCartController::class, 'loadOrderToCart']);
+    Route::post('/pos/orders/bulk-delete', [PosCartController::class, 'deleteOrders']);
     Route::post('/product/step1', [ProductController::class, 'createProductStep1']);
     Route::put('/product/type/update', [ProductController::class, 'updateProductType']);
     Route::get('/product/type/get/{id}', [ProductController::class, 'getProductType']);
@@ -84,6 +105,18 @@ Route::prefix('vendor')->middleware(['auth:sanctum', 'user_type:2', 'set_tenant_
     Route::get('/term/edit/{id}', [TermController::class, 'editTerm']);
     Route::put('/term/update', [TermController::class, 'updateTerm']);
     Route::delete('/term/{id}', [TermController::class, 'deleteTerm']);
+
+    // Dynamic Product Option Values (series, color, quality, type, storage, ram, processor)
+    Route::get('/product-options/{type}', [ProductOptionController::class, 'index']);
+    Route::post('/product-options/{type}', [ProductOptionController::class, 'store']);
+    Route::put('/product-options/{type}/{id}', [ProductOptionController::class, 'update']);
+    Route::delete('/product-options/{type}/{id}', [ProductOptionController::class, 'destroy']);
+
+    // Series Routes (alias to product-options/series)
+    Route::get('/series', [ProductOptionController::class, 'index'])->defaults('type', 'series');
+    Route::post('/series', [ProductOptionController::class, 'store'])->defaults('type', 'series');
+    Route::put('/series/{id}', [ProductOptionController::class, 'update'])->defaults('type', 'series');
+    Route::delete('/series/{id}', [ProductOptionController::class, 'destroy'])->defaults('type', 'series');
 
     // Media Routes
     Route::get('/medias', [MediaController::class, 'index']);

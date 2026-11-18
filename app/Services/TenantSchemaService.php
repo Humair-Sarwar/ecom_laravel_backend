@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -72,6 +73,16 @@ class TenantSchemaService
 
         $tenantSchema = Schema::connection('tenant_pgsql');
         $tablesCreated = [];
+        $totalSteps = 24;
+        $reportProgress = function (int $step, string $table, bool $done = false) use ($schemaName, $totalSteps) {
+            Cache::put("schema_progress_{$schemaName}", [
+                'applied' => min($step, $totalSteps),
+                'total' => $totalSteps,
+                'current' => $table,
+                'done' => $done,
+            ], 300);
+        };
+        $reportProgress(0, 'initializing');
 
         // 3. Provision 'brands' table
         if (!$tenantSchema->hasTable('brands')) {
@@ -88,6 +99,7 @@ class TenantSchemaService
             });
             $tablesCreated[] = 'brands';
         }
+        $reportProgress(1, 'brands');
 
         // 4. Provision 'categories' table
         if (!$tenantSchema->hasTable('categories')) {
@@ -230,6 +242,7 @@ class TenantSchemaService
                 });
             }
         }
+        $reportProgress(6, 'products');
 
         // 9. Provision 'product_images' table
         if (!$tenantSchema->hasTable('product_images')) {
@@ -321,6 +334,7 @@ class TenantSchemaService
             });
             $tablesCreated[] = 'store_settings';
         }
+        $reportProgress(12, 'store_settings');
 
         // 15. Provision 'medias' table
         if (!$tenantSchema->hasTable('medias')) {
@@ -460,6 +474,7 @@ class TenantSchemaService
                 });
             }
         }
+        $reportProgress(18, 'purchase_orders');
 
         // 21. Provision 'purchase_order_items' table
         if (!$tenantSchema->hasTable('purchase_order_items')) {
@@ -565,6 +580,65 @@ class TenantSchemaService
             });
             $tablesCreated[] = 'daily_expenses';
         }
+
+        // 25. Provision 'pos_orders' table
+        if (!$tenantSchema->hasTable('pos_orders')) {
+            $tenantSchema->create('pos_orders', function (Blueprint $table) {
+                $table->uuid('id')->primary();
+                $table->unsignedBigInteger('business_id')->index();
+                $table->string('order_no', 64)->index();
+                $table->string('status', 30)->default('cart')->index();
+                $table->string('transaction_type', 30)->default('sale')->index();
+                $table->uuid('customer_id')->nullable()->index();
+                $table->string('customer_name', 255)->nullable();
+                $table->string('customer_phone', 50)->nullable();
+                $table->uuid('order_type_id')->nullable();
+                $table->string('order_type_name', 150)->nullable();
+                $table->uuid('order_process_id')->nullable();
+                $table->string('order_process_name', 150)->nullable();
+                $table->decimal('subtotal', 15, 2)->default(0.00);
+                $table->decimal('discount_amount', 15, 2)->default(0.00);
+                $table->decimal('tax_amount', 15, 2)->default(0.00);
+                $table->decimal('total_amount', 15, 2)->default(0.00);
+                $table->decimal('paid_amount', 15, 2)->default(0.00);
+                $table->decimal('balance_amount', 15, 2)->default(0.00);
+                $table->text('notes')->nullable();
+                $table->uuid('created_by')->nullable()->index();
+                $table->string('created_by_name', 150)->nullable();
+                $table->uuid('served_by')->nullable();
+                $table->string('served_by_name', 150)->nullable();
+                $table->timestamp('completed_at')->nullable();
+                $table->boolean('is_deleted')->default(false)->index();
+                $table->timestamps();
+            });
+            $tablesCreated[] = 'pos_orders';
+        }
+        $reportProgress(23, 'pos_orders');
+
+        // 26. Provision 'pos_order_items' table
+        if (!$tenantSchema->hasTable('pos_order_items')) {
+            $tenantSchema->create('pos_order_items', function (Blueprint $table) {
+                $table->uuid('id')->primary();
+                $table->uuid('pos_order_id')->index();
+                $table->foreign('pos_order_id')->references('id')->on('pos_orders')->onUpdate('cascade')->onDelete('cascade');
+                $table->uuid('product_id')->nullable()->index();
+                $table->uuid('variation_id')->nullable();
+                $table->string('transaction_type', 30)->default('sale')->index();
+                $table->string('product_name', 500);
+                $table->string('sku', 150)->nullable();
+                $table->string('vat_status', 100)->nullable()->default('VAT Exempt');
+                $table->integer('qty')->default(1);
+                $table->decimal('unit_price', 15, 2)->default(0.00);
+                $table->decimal('discount_amount', 15, 2)->default(0.00);
+                $table->string('discount_type', 20)->default('fixed');
+                $table->decimal('line_total', 15, 2)->default(0.00);
+                $table->text('imei_serial_no')->nullable();
+                $table->text('notes')->nullable();
+                $table->timestamps();
+            });
+            $tablesCreated[] = 'pos_order_items';
+        }
+        $reportProgress($totalSteps, 'completed', true);
 
         return [
             'success' => true,

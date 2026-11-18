@@ -57,6 +57,7 @@ Route::prefix('systemuser')->middleware(['auth:sanctum', 'user_type:3'])->group(
 
     // Businesses Management
     Route::get('/businesses/form-options', [BusinessController::class, 'formOptions']);
+    Route::get('/businesses/schema-progress/{schemaName}', [BusinessController::class, 'schemaProgress']);
     Route::get('/businesses', [BusinessController::class, 'index']);
     Route::post('/businesses', [BusinessController::class, 'store']);
     Route::get('/businesses/{id}', [BusinessController::class, 'show']);

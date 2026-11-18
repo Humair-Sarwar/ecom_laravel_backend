@@ -7,6 +7,10 @@ use App\Models\Attribute;
 use App\Models\Category;
 use App\Models\Product;
 use App\Models\ProductAttributeTerm;
+use App\Models\PurchaseOrder;
+use App\Models\PurchaseOrderItem;
+use App\Models\Supplier;
+use App\Models\SupplierLedger;
 use App\Models\Term;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -247,7 +251,11 @@ class ProductController extends Controller
                     'error' => $validateSimpleProduct->errors()
                 ], 422);
             }
-            $query->update($request->all());
+            $updatePayload = $request->all();
+            if (!\Illuminate\Support\Facades\Schema::hasColumn('products', 'specs')) {
+                unset($updatePayload['specs']);
+            }
+            $query->update($updatePayload);
             $data = $query->fresh(['category', 'brand', 'media', 'variationImage']);
             $mediaPath = optional($data->media->first())->media_path ?: optional($data->variationImage)->media_path;
             $stockItems = [[
@@ -1217,11 +1225,14 @@ class ProductController extends Controller
         $hotList = $request->query('hot_list');
         $categoryParam = $request->query('category');
         $categoryId = $request->query('category_id');
+        $brandId = $request->query('brand_id');
         $search = trim((string) $request->query('search', ''));
+        $stockStatus = trim((string) $request->query('stock_status', 'All'));
+        $publishStatus = trim((string) $request->query('status', 'Published'));
 
         $baseQuery = Product::where('business_id', $businessId)
             ->where('is_deleted', false)
-            ->where('is_published', true)
+            ->where('is_published', strtolower($publishStatus) !== 'draft')
             ->whereNull('parent_product_id')
             ->with([
                 'category',
@@ -1251,18 +1262,83 @@ class ProductController extends Controller
             }
         }
 
-        // Optional search by title or SKU across simple products and variations
+        // Optional filter by brand_id
+        if (!empty($brandId) && strtolower((string) $brandId) !== 'all') {
+            $baseQuery->where('brand_id', $brandId);
+        }
+
+        // Optional search by title, SKU, or additional barcodes in specs
         if ($search !== '') {
             $baseQuery->where(function ($q) use ($search) {
-                $q->where('title', 'like', "%{$search}%")
-                    ->orWhere('product_sku', 'like', "%{$search}%")
+                $q->where('title', 'ilike', "%{$search}%")
+                    ->orWhere('product_sku', 'ilike', "%{$search}%")
+                    ->orWhereRaw("CAST(specs AS TEXT) ILIKE ?", ["%{$search}%"])
                     ->orWhereHas('variations', function ($vq) use ($search) {
                         $vq->where('is_deleted', false)
                             ->where(function ($inner) use ($search) {
-                                $inner->where('title', 'like', "%{$search}%")
-                                    ->orWhere('product_sku', 'like', "%{$search}%");
+                                $inner->where('title', 'ilike', "%{$search}%")
+                                    ->orWhere('product_sku', 'ilike', "%{$search}%");
                             });
                     });
+            });
+        }
+
+        // Optional filter by Stock Status (In Stock / Out of Stock)
+        if (strtolower($stockStatus) === 'in stock') {
+            $baseQuery->where(function ($q) {
+                $q->where('stock_quantity', '>', 0)
+                    ->orWhereHas('variations', function ($vq) {
+                        $vq->where('is_deleted', false)->where('stock_quantity', '>', 0);
+                    });
+            });
+        } elseif (strtolower($stockStatus) === 'out of stock') {
+            $baseQuery->where(function ($q) {
+                $q->where(function ($sq) {
+                    $sq->where('product_type', '!=', 2)->where('stock_quantity', '<=', 0);
+                })->orWhere(function ($vq) {
+                    $vq->where('product_type', 2)->whereDoesntHave('variations', function ($sub) {
+                        $sub->where('is_deleted', false)->where('stock_quantity', '>', 0);
+                    });
+                });
+            });
+        } elseif (strtolower($stockStatus) === 'unmanaged') {
+            $baseQuery->where('apply_stock_strictly', false);
+        } elseif (strtolower($stockStatus) === 'low stock') {
+            $baseQuery->where(function ($q) {
+                $q->where(function ($sq) {
+                    $sq->where('product_type', '!=', 2)
+                        ->where('stock_quantity', '>', 0)
+                        ->whereColumn('stock_quantity', '<=', 'min_stock_alert');
+                })->orWhereHas('variations', function ($vq) {
+                    $vq->where('is_deleted', false)
+                        ->where('stock_quantity', '>', 0)
+                        ->whereColumn('stock_quantity', '<=', 'min_stock_alert');
+                });
+            });
+        }
+
+        // Optional filter by option/attribute terms (series, quality, color, type, ram, storage, processor)
+        $optionFilterKeys = ['series', 'quality', 'color', 'type', 'ram', 'storage', 'processor'];
+        foreach ($optionFilterKeys as $optKey) {
+            $optVal = trim((string) $request->query($optKey, ''));
+            if ($optVal === '') {
+                continue;
+            }
+            $lowerVal = strtolower($optVal);
+            $matchingProductIds = DB::table('product_attributes_terms')
+                ->join('terms', 'product_attributes_terms.term_id', '=', 'terms.id')
+                ->whereRaw('LOWER(terms.title) = ?', [$lowerVal])
+                ->pluck('product_attributes_terms.product_id')
+                ->toArray();
+
+            $baseQuery->where(function ($q) use ($matchingProductIds, $optVal) {
+                if (!empty($matchingProductIds)) {
+                    $q->whereIn('id', $matchingProductIds);
+                } else {
+                    $q->whereRaw('1 = 0');
+                }
+                $q->orWhere('title', 'ilike', "%{$optVal}%")
+                    ->orWhere('description', 'ilike', "%{$optVal}%");
             });
         }
 
@@ -1440,15 +1516,16 @@ class ProductController extends Controller
 
                     $regularPrice = (float) ($variation->regular_price ?? $product->regular_price ?? 0);
                     $salePrice = (float) ($variation->sale_price ?? $product->sale_price ?? 0);
-                    $effectivePrice = $salePrice > 0 ? $salePrice : $regularPrice;
-                    $oldPrice = ($regularPrice > 0 && $salePrice > 0 && $regularPrice > $salePrice)
+                    $isOnSale = (bool) ($variation->is_on_sale ?? $product->is_on_sale ?? false);
+                    $effectivePrice = ($isOnSale && $salePrice > 0)
+                        ? $salePrice
+                        : ($regularPrice > 0 ? $regularPrice : $salePrice);
+                    $oldPrice = ($isOnSale && $regularPrice > 0 && $salePrice > 0 && $regularPrice > $salePrice)
                         ? $regularPrice
                         : null;
 
-                    $inStock = (bool) ($variation->product_status_stock ?? true);
-                    $stockCount = $inStock
-                        ? max(1, (int) ($variation->min_stock_alert ?? 1))
-                        : 0;
+                    $stockCount = (int) ($variation->stock_quantity ?? 0);
+                    $inStock = (bool) ($variation->product_status_stock ?? ($stockCount > 0));
 
                     $formattedVariations[] = [
                         'id' => $variation->id,
@@ -1464,6 +1541,7 @@ class ProductController extends Controller
                         'oldPrice' => $oldPrice,
                         'regular_price' => $regularPrice,
                         'sale_price' => $salePrice,
+                        'is_on_sale' => $isOnSale,
                         'stock' => $stockCount,
                         'product_status_stock' => $inStock ? 1 : 0,
                         'sku' => (string) ($variation->product_sku ?: $product->product_sku ?: 'N/A'),
@@ -1506,7 +1584,19 @@ class ProductController extends Controller
                     'variants' => $defaultVariation['variants'],
                     'image' => $defaultVariation['image'] ?: $parentImageUrl,
                     'vatStatus' => 'VAT Exempt',
+                    'active_for' => (int) ($product->active_for ?? 1),
+                    'condition_id' => (int) ($product->condition ?? 1),
+                    'min_stock_alert' => (int) ($product->min_stock_alert ?? 1),
+                    'is_serialized' => (bool) ($product->is_serialized ?? false),
+                    'is_on_sale' => (bool) ($product->is_on_sale ?? false),
+                    'apply_stock_strictly' => (bool) ($product->apply_stock_strictly ?? true),
+                    'get_stock_alert' => (bool) ($product->get_stock_alert ?? true),
+                    'description' => (string) ($product->description ?? ''),
+                    'had_stock' => ((int) ($defaultVariation['stock'] ?? 0) > 0),
                     'is_hot' => (bool) $product->is_hot,
+                    'release_year' => $product->release_year,
+                    'specs' => is_array($product->specs ?? null) ? $product->specs : (is_string($product->specs ?? null) ? json_decode($product->specs, true) : []),
+                    'barcodes' => $this->formatProductBarcodes($product),
                     'attributes' => array_values($fallbackAttributesMap),
                     'variations' => $formattedVariations,
                     'default_term_map' => $defaultVariation['term_map'] ?? [],
@@ -1515,15 +1605,16 @@ class ProductController extends Controller
                 // Simple product (or variable product before variations are generated)
                 $regularPrice = (float) ($product->regular_price ?? 0);
                 $salePrice = (float) ($product->sale_price ?? 0);
-                $effectivePrice = $salePrice > 0 ? $salePrice : $regularPrice;
-                $oldPrice = ($regularPrice > 0 && $salePrice > 0 && $regularPrice > $salePrice)
+                $isOnSale = (bool) ($product->is_on_sale ?? false);
+                $effectivePrice = ($isOnSale && $salePrice > 0)
+                    ? $salePrice
+                    : ($regularPrice > 0 ? $regularPrice : $salePrice);
+                $oldPrice = ($isOnSale && $regularPrice > 0 && $salePrice > 0 && $regularPrice > $salePrice)
                     ? $regularPrice
                     : null;
 
-                $inStock = (bool) ($product->product_status_stock ?? true);
-                $stockCount = $inStock
-                    ? max(1, (int) ($product->min_stock_alert ?? 1))
-                    : 0;
+                $stockCount = (int) ($product->stock_quantity ?? 0);
+                $inStock = (bool) ($product->product_status_stock ?? ($stockCount > 0));
 
                 $posItems[] = [
                     'id' => $product->id,
@@ -1550,7 +1641,19 @@ class ProductController extends Controller
                     'variants' => [],
                     'image' => $parentImageUrl,
                     'vatStatus' => 'VAT Exempt',
+                    'active_for' => (int) ($product->active_for ?? 1),
+                    'condition_id' => (int) ($product->condition ?? 1),
+                    'min_stock_alert' => (int) ($product->min_stock_alert ?? 1),
+                    'is_serialized' => (bool) ($product->is_serialized ?? false),
+                    'is_on_sale' => (bool) ($product->is_on_sale ?? false),
+                    'apply_stock_strictly' => (bool) ($product->apply_stock_strictly ?? true),
+                    'get_stock_alert' => (bool) ($product->get_stock_alert ?? true),
+                    'description' => (string) ($product->description ?? ''),
+                    'had_stock' => ($stockCount > 0),
                     'is_hot' => (bool) $product->is_hot,
+                    'release_year' => $product->release_year,
+                    'specs' => is_array($product->specs ?? null) ? $product->specs : (is_string($product->specs ?? null) ? json_decode($product->specs, true) : []),
+                    'barcodes' => $this->formatProductBarcodes($product),
                     'attributes' => [],
                     'variations' => [],
                     'default_term_map' => [],
@@ -1563,6 +1666,880 @@ class ProductController extends Controller
             'message' => 'POS products retrieved successfully',
             'data' => $posItems,
         ], 200);
+    }
+
+    /**
+     * Quick add a POS product and optionally record a Purchase Order + Supplier Ledger entry.
+     */
+    public function quickAddPosProduct(Request $request)
+    {
+        $businessId = auth()->id();
+        $user = auth()->user();
+
+        $validator = Validator::make($request->all(), [
+            'title' => 'required|string|max:500',
+            'condition' => 'required',
+            'category_id' => 'required|uuid|exists:categories,id',
+            'brand_id' => 'required|uuid|exists:brands,id',
+            'regular_price' => 'required|numeric|min:0',
+            'sale_price' => 'required|numeric|min:0',
+            'product_sku' => 'nullable|string|max:120',
+            'purchase_order' => 'nullable|boolean',
+            'supplier_id' => 'nullable|uuid|exists:suppliers,id',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => false,
+                'message' => $validator->errors()->first(),
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $conditionMap = [
+            'Brand New' => 1,
+            'Refurbished' => 2,
+            'Like New' => 3,
+            'Used' => 5,
+        ];
+        $rawCondition = (string) $request->input('condition');
+        $conditionVal = $conditionMap[$rawCondition] ?? (is_numeric($rawCondition) ? (int) $rawCondition : 1);
+
+        $baseSlug = Str::slug((string) $request->input('title')) ?: 'product';
+        $productSlug = $baseSlug;
+        if (Product::where('product_slug', $productSlug)->exists()) {
+            $productSlug = $baseSlug . '-' . Str::lower(Str::random(5));
+        }
+
+        $isPurchaseOrder = $request->boolean('purchase_order', false);
+        $manageStock = $request->boolean('manage_stock', true);
+        $inStock = ($request->input('status', 'In Stock') !== 'Out of Stock');
+        $serialItems = $request->input('serial_items', []);
+        $hasSerialItems = is_array($serialItems) && count($serialItems) > 0;
+
+        if ($isPurchaseOrder && $hasSerialItems) {
+            $seenImeis = [];
+            foreach ($serialItems as $sItem) {
+                $imei = trim((string) ($sItem['imei_serial_no'] ?? ''));
+                if ($imei === '') {
+                    continue;
+                }
+                $lower = strtolower($imei);
+                if (in_array($lower, $seenImeis, true)) {
+                    return response()->json([
+                        'status' => false,
+                        'message' => "Duplicate IMEI or Serial Number \"{$imei}\" in order.",
+                    ], 422);
+                }
+                $seenImeis[] = $lower;
+
+                $existsInPo = PurchaseOrderItem::whereHas('purchaseOrder', function ($q) use ($businessId) {
+                    $q->where('business_id', $businessId);
+                })
+                    ->where(function ($q) use ($imei) {
+                        $q->where('imei_serial_no', $imei)
+                            ->orWhereRaw("? = ANY(string_to_array(replace(imei_serial_no, ' ', ''), ','))", [$imei]);
+                    })
+                    ->exists();
+
+                $existsInProducts = Product::where('business_id', $businessId)
+                    ->where('is_deleted', false)
+                    ->where('product_sku', $imei)
+                    ->exists();
+
+                if ($existsInPo || $existsInProducts) {
+                    return response()->json([
+                        'status' => false,
+                        'message' => "IMEI or Serial Number \"{$imei}\" already exists in the system.",
+                    ], 422);
+                }
+            }
+        }
+        $poQty = $hasSerialItems ? count($serialItems) : max(0, (int) $request->input('po_quantity', 0));
+        $packQty = max(1, (int) $request->input('pack_quantity', 1));
+
+        $initialStock = 0;
+        if ($isPurchaseOrder) {
+            $initialStock = max(1, $poQty);
+        }
+
+        DB::beginTransaction();
+        try {
+            $productData = [
+                'business_id' => $businessId,
+                'active_for' => 1,
+                'condition' => $conditionVal,
+                'title' => trim((string) $request->input('title')),
+                'product_slug' => $productSlug,
+                'category_id' => $request->input('category_id'),
+                'brand_id' => $request->input('brand_id'),
+                'product_type' => 1,
+                'is_web' => false,
+                'is_pos' => true,
+                'is_published' => true,
+                'is_hot' => $request->boolean('is_hot', false),
+                'is_on_sale' => $request->boolean('is_on_sale', false),
+                'get_stock_alert' => $request->boolean('is_serialized', false)
+                    ? true
+                    : ($manageStock ? $request->boolean('get_stock_alert', true) : false),
+                'apply_stock_strictly' => $request->boolean('is_serialized', false) ? true : $manageStock,
+                'is_serialized' => $request->boolean('is_serialized', false),
+                'product_status_stock' => $inStock,
+                'min_stock_alert' => max(0, (int) $request->input('min_stock_alert', 1)),
+                'regular_price' => (float) $request->input('regular_price', 0),
+                'sale_price' => (float) $request->input('sale_price', 0),
+                'stock_quantity' => $initialStock,
+                'release_year' => is_numeric($request->input('release_year')) ? (int) $request->input('release_year') : null,
+                'description' => $request->input('comments'),
+            ];
+
+            $sku = trim((string) $request->input('product_sku', ''));
+            if ($sku !== '') {
+                $productData['product_sku'] = $sku;
+            }
+
+            if (\Illuminate\Support\Facades\Schema::hasColumn('products', 'specs')) {
+                $specsPayload = array_filter([
+                    'warranty' => $request->input('warranty'),
+                    'series' => $request->input('series'),
+                    'color' => $request->input('color'),
+                    'quality' => $request->input('quality'),
+                    'type' => $request->input('type'),
+                    'network' => $request->input('network'),
+                    'storage' => $request->input('storage'),
+                    'ram' => $request->input('ram'),
+                    'processor' => $request->input('processor'),
+                    'release_year' => $request->input('release_year'),
+                    'carrier_option' => $request->input('carrier_option'),
+                    'sim' => $request->input('sim'),
+                    'battery_health' => $request->input('battery_health'),
+                    'screen_size' => $request->input('screen_size'),
+                ], fn($v) => $v !== null && $v !== '');
+                if (!empty($specsPayload)) {
+                    $productData['specs'] = $specsPayload;
+                }
+            }
+
+            $product = Product::create($productData);
+
+            // Optionally create Purchase Order & Supplier Ledger entries
+            if ($isPurchaseOrder && $request->filled('supplier_id')) {
+                $supplier = Supplier::where('business_id', $businessId)
+                    ->where('is_deleted', false)
+                    ->find($request->input('supplier_id'));
+
+                if (!$supplier) {
+                    DB::rollBack();
+                    return response()->json([
+                        'status' => false,
+                        'message' => 'Selected supplier not found.',
+                    ], 404);
+                }
+
+                do {
+                    $orderNo = (string) random_int(10000000, 99999999);
+                } while (PurchaseOrder::where('business_id', $businessId)->where('order_no', $orderNo)->exists());
+
+                $qty = max(1, $poQty);
+                $unitCost = (float) $request->input('unit_cost', 0);
+                $packPrice = (float) $request->input('pack_price', 0);
+                $effectiveUnitCost = $unitCost > 0 ? $unitCost : $packPrice;
+
+                if ($hasSerialItems) {
+                    $grandTotal = 0;
+                    foreach ($serialItems as $sItem) {
+                        $sUnit = (float) ($sItem['unit_cost'] ?? 0);
+                        $sPack = (float) ($sItem['pack_price'] ?? 0);
+                        $grandTotal += ($sUnit > 0 ? $sUnit : $sPack);
+                    }
+                } else {
+                    $grandTotal = $effectiveUnitCost * $qty;
+                }
+
+                $cashPaid = (float) $request->input('cash_paid', 0);
+                $cardPaid = (float) $request->input('card_paid', 0);
+                $bankPaid = (float) $request->input('bank_paid', 0);
+                $paidAmount = $cashPaid + $cardPaid + $bankPaid;
+                $balance = max(0.00, $grandTotal - $paidAmount);
+
+                $creatorName = trim(($user->first_name ?? '') . ' ' . ($user->last_name ?? ''))
+                    ?: ($user->name ?? $user->email ?? 'Vendor');
+
+                $orderDate = $request->input('order_date') ?: now()->toDateString();
+
+                $order = PurchaseOrder::create([
+                    'business_id' => $businessId,
+                    'supplier_id' => $supplier->id,
+                    'order_no' => $orderNo,
+                    'order_date' => $orderDate,
+                    'status' => 'completed',
+                    'fulfillment_status' => 'fulfilled',
+                    'is_trade_in' => false,
+                    'grand_total' => $grandTotal,
+                    'paid_amount' => $paidAmount,
+                    'balance' => $balance,
+                    'cash_paid' => $cashPaid,
+                    'card_paid' => $cardPaid,
+                    'bank_paid' => $bankPaid,
+                    'use_today_sales' => $request->boolean('use_today_sales', false),
+                    'notes' => $request->input('po_description'),
+                    'created_by' => $businessId,
+                    'created_by_name' => $creatorName,
+                ]);
+
+                if ($hasSerialItems) {
+                    foreach ($serialItems as $sItem) {
+                        $sUnit = (float) ($sItem['unit_cost'] ?? 0);
+                        $sPack = (float) ($sItem['pack_price'] ?? 0);
+                        $sEffective = $sUnit > 0 ? $sUnit : $sPack;
+                        PurchaseOrderItem::create([
+                            'purchase_order_id' => $order->id,
+                            'product_id' => $product->id,
+                            'product_name' => $product->title,
+                            'sku' => $product->product_sku,
+                            'condition' => $rawCondition,
+                            'category_name' => optional($product->category)->title,
+                            'brand_name' => optional($product->brand)->title,
+                            'warranty' => $request->input('warranty'),
+                            'year' => $request->input('release_year'),
+                            'unit_cost' => $sEffective,
+                            'pack_price' => $sPack > 0 ? $sPack : null,
+                            'quantity' => 1,
+                            'received_quantity' => 1,
+                            'total_cost' => $sEffective,
+                            'description' => $request->input('po_description'),
+                            'imei_serial_no' => $sItem['imei_serial_no'] ?? null,
+                            'received_at' => now(),
+                            'item_status' => 'ready_for_sell',
+                        ]);
+                    }
+                } else {
+                    PurchaseOrderItem::create([
+                        'purchase_order_id' => $order->id,
+                        'product_id' => $product->id,
+                        'product_name' => $product->title,
+                        'sku' => $product->product_sku,
+                        'condition' => $rawCondition,
+                        'category_name' => optional($product->category)->title,
+                        'brand_name' => optional($product->brand)->title,
+                        'warranty' => $request->input('warranty'),
+                        'year' => $request->input('release_year'),
+                        'unit_cost' => $effectiveUnitCost,
+                        'pack_price' => $packPrice > 0 ? $packPrice : null,
+                        'quantity' => $qty,
+                        'received_quantity' => $qty,
+                        'total_cost' => $grandTotal,
+                        'description' => $request->input('po_description'),
+                        'imei_serial_no' => $request->input('imei_serial_no'),
+                        'received_at' => now(),
+                        'item_status' => 'ready_for_sell',
+                    ]);
+                }
+
+                $runningBalance = (float) $supplier->balance + $grandTotal;
+                SupplierLedger::create([
+                    'business_id' => $businessId,
+                    'supplier_id' => $supplier->id,
+                    'reference_no' => $orderNo,
+                    'transaction_type' => 'purchase_order',
+                    'purchase_amount' => $grandTotal,
+                    'payment_amount' => 0.00,
+                    'balance' => $runningBalance,
+                    'payment_type' => 'N/A',
+                    'transaction_date' => $orderDate,
+                    'description' => 'Quick Add Product Purchase Order',
+                    'use_pos_balance' => false,
+                    'created_by' => $businessId,
+                    'created_by_name' => $creatorName,
+                    'created_at' => now()->subSeconds(10),
+                ]);
+
+                $paymentSplits = [];
+                if ($cashPaid > 0) $paymentSplits[] = ['type' => 'Cash', 'amount' => $cashPaid, 'seconds' => 3];
+                if ($bankPaid > 0) $paymentSplits[] = ['type' => 'Bank', 'amount' => $bankPaid, 'seconds' => 2];
+                if ($cardPaid > 0) $paymentSplits[] = ['type' => 'Card', 'amount' => $cardPaid, 'seconds' => 1];
+
+                foreach ($paymentSplits as $split) {
+                    $runningBalance = max(0.00, $runningBalance - $split['amount']);
+                    SupplierLedger::create([
+                        'business_id' => $businessId,
+                        'supplier_id' => $supplier->id,
+                        'reference_no' => $orderNo,
+                        'transaction_type' => 'payment',
+                        'purchase_amount' => 0.00,
+                        'payment_amount' => $split['amount'],
+                        'balance' => $runningBalance,
+                        'payment_type' => $split['type'],
+                        'transaction_date' => $orderDate,
+                        'description' => 'Purchase Order Payment',
+                        'use_pos_balance' => $request->boolean('use_today_sales', false),
+                        'created_by' => $businessId,
+                        'created_by_name' => $creatorName,
+                        'created_at' => now()->subSeconds($split['seconds']),
+                    ]);
+                }
+
+                $supplier->update(['balance' => $runningBalance]);
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'status' => true,
+                'message' => 'Product added successfully!',
+                'data' => $product->fresh(['category', 'brand']),
+            ], 201);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'status' => false,
+                'message' => 'Failed to add product: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    private function formatProductBarcodes($product): array
+    {
+        $specs = is_array($product->specs ?? null)
+            ? $product->specs
+            : (is_string($product->specs ?? null) ? json_decode($product->specs, true) : []);
+        $list = is_array($specs['barcodes'] ?? null) ? $specs['barcodes'] : [];
+
+        if (empty($list) && !empty($product->product_sku)) {
+            $list = [[
+                'id' => 'primary',
+                'barcode' => (string) $product->product_sku,
+                'is_default' => true,
+                'created_at' => $product->created_at
+                    ? $product->created_at->toIso8601String()
+                    : now()->toIso8601String(),
+            ]];
+        }
+
+        return $list;
+    }
+
+    public function updatePosProduct(Request $request)
+    {
+        $businessId = auth()->id();
+        $validator = Validator::make($request->all(), [
+            'id' => 'required|uuid',
+            'title' => 'required|string|max:500',
+            'condition' => 'required',
+            'category_id' => 'nullable|uuid|exists:categories,id',
+            'brand_id' => 'nullable|uuid|exists:brands,id',
+            'regular_price' => 'required|numeric|min:0',
+            'sale_price' => 'required|numeric|min:0',
+            'product_sku' => 'nullable|string|max:120',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => false,
+                'message' => $validator->errors()->first(),
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $product = Product::where('business_id', $businessId)
+            ->where('is_deleted', false)
+            ->find($request->input('id'));
+
+        if (!$product) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Product not found.',
+            ], 404);
+        }
+
+        $newSku = trim((string) $request->input('product_sku', ''));
+        if ($newSku !== '' && $newSku !== (string) $product->product_sku) {
+            $skuExists = Product::where('business_id', $businessId)
+                ->where('is_deleted', false)
+                ->where('id', '!=', $product->id)
+                ->where('product_sku', $newSku)
+                ->exists();
+            if ($skuExists) {
+                return response()->json([
+                    'status' => false,
+                    'message' => "SKU / Barcode \"{$newSku}\" is already assigned to another product.",
+                ], 422);
+            }
+            $product->product_sku = $newSku;
+
+            if (\Illuminate\Support\Facades\Schema::hasTable('product_barcodes')) {
+                $defaultBarcode = \App\Models\ProductBarcode::where('product_id', $product->id)
+                    ->where('is_default', true)
+                    ->first();
+                if ($defaultBarcode) {
+                    $defaultBarcode->barcode = $newSku;
+                    $defaultBarcode->save();
+                } else {
+                    \App\Models\ProductBarcode::create([
+                        'product_id' => $product->id,
+                        'business_id' => $businessId,
+                        'barcode' => $newSku,
+                        'is_default' => true,
+                    ]);
+                }
+            }
+        }
+
+        $conditionMap = [
+            'Brand New' => 1,
+            'Refurbished' => 2,
+            'Like New' => 3,
+            'Excellent' => 4,
+            'Good' => 5,
+            'Used' => 5,
+            'Fair' => 6,
+            'For Parts' => 7,
+        ];
+        $rawCondition = (string) $request->input('condition');
+        $conditionVal = $conditionMap[$rawCondition] ?? (is_numeric($rawCondition) ? (int) $rawCondition : (int) ($product->condition ?? 1));
+
+        $product->active_for = (int) $request->input('active_for', $product->active_for ?? 1);
+        $product->condition = $conditionVal;
+        $product->title = trim((string) $request->input('title'));
+        if ($request->filled('category_id')) {
+            $product->category_id = $request->input('category_id');
+        }
+        if ($request->filled('brand_id')) {
+            $product->brand_id = $request->input('brand_id');
+        }
+
+        $inStock = ($request->input('status', 'In Stock') !== 'Out of Stock');
+        $product->product_status_stock = $inStock;
+        $product->min_stock_alert = max(0, (int) $request->input('min_stock_alert', 0));
+        $product->regular_price = (float) $request->input('regular_price', 0);
+        $product->sale_price = (float) $request->input('sale_price', 0);
+
+        if ((int) ($product->stock_quantity ?? 0) <= 0 && $request->has('is_serialized')) {
+            $product->is_serialized = $request->boolean('is_serialized', false);
+        }
+
+        $releaseYearInput = $request->input('release_year');
+        $product->release_year = is_numeric($releaseYearInput) ? (int) $releaseYearInput : null;
+        $product->description = $request->input('comments');
+        $product->is_on_sale = $request->boolean('is_on_sale', false);
+        $product->apply_stock_strictly = $product->is_serialized ? true : $request->boolean('apply_stock_strictly', true);
+        $product->get_stock_alert = $product->is_serialized
+            ? true
+            : ($product->apply_stock_strictly ? $request->boolean('get_stock_alert', true) : false);
+        $product->is_hot = $request->boolean('is_hot', false);
+
+        if (\Illuminate\Support\Facades\Schema::hasColumn('products', 'specs')) {
+            $existingSpecs = is_array($product->specs ?? null)
+                ? $product->specs
+                : (is_string($product->specs ?? null) ? (json_decode($product->specs, true) ?: []) : []);
+
+            $mergedSpecs = array_merge($existingSpecs, [
+                'min_sale_price_limit' => $request->input('min_sale_price_limit', 0),
+                'unit_of_measure' => $request->input('unit_of_measure', 'Piece'),
+                'pack_quantity' => max(1, (int) $request->input('pack_quantity', 1)),
+                'tax_definition' => $request->input('tax_definition', 'N/A'),
+                'imei_serial_type' => $request->input('imei_serial_type', 'Imei No'),
+                'imei_serial_no' => $request->input('imei_serial_no', ''),
+                'warranty' => $request->input('warranty', ''),
+                'series' => $request->input('series', ''),
+                'color' => $request->input('color', ''),
+                'quality' => $request->input('quality', ''),
+                'type' => $request->input('type', ''),
+                'network' => $request->input('network', ''),
+                'storage' => $request->input('storage', ''),
+                'ram' => $request->input('ram', ''),
+                'processor' => $request->input('processor', ''),
+                'release_year' => $request->input('release_year', ''),
+                'carrier_option' => $request->input('carrier_option', ''),
+                'sim' => $request->input('sim', ''),
+                'battery_health' => $request->input('battery_health', ''),
+                'screen_size' => $request->input('screen_size', ''),
+            ]);
+            $product->specs = array_filter($mergedSpecs, fn($v) => $v !== null && $v !== '');
+        }
+
+        $product->save();
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Product updated successfully!',
+            'data' => $product,
+        ], 200);
+    }
+
+    public function updatePosPrice(Request $request)
+    {
+        $businessId = auth()->id();
+        $validator = Validator::make($request->all(), [
+            'id' => 'required|uuid',
+            'variation_id' => 'nullable|uuid',
+            'regular_price' => 'required|numeric|gt:0',
+            'sale_price' => 'required|numeric|min:0',
+            'is_on_sale' => 'nullable|boolean',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => false,
+                'message' => $validator->errors()->first(),
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $regularPrice = (float) $request->input('regular_price');
+        $salePrice = (float) $request->input('sale_price');
+        if ($salePrice > $regularPrice) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Sale price must be less or equal to regular price.',
+            ], 422);
+        }
+
+        $targetId = $request->input('variation_id') ?: $request->input('id');
+        $product = Product::where('business_id', $businessId)
+            ->where('is_deleted', false)
+            ->find($targetId);
+
+        if (!$product) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Product not found.',
+            ], 404);
+        }
+
+        $product->regular_price = $regularPrice;
+        $product->sale_price = $salePrice;
+        $product->is_on_sale = $request->boolean('is_on_sale', false);
+        $product->save();
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Price updated successfully!',
+            'data' => $product,
+        ], 200);
+    }
+
+    public function getPosProductStockHistory($id)
+    {
+        $businessId = auth()->id();
+        $product = Product::where('business_id', $businessId)
+            ->where('is_deleted', false)
+            ->find($id);
+
+        if (!$product) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Product not found.',
+            ], 404);
+        }
+
+        $poItems = PurchaseOrderItem::with(['purchaseOrder.supplier'])
+            ->where('product_id', $product->id)
+            ->whereHas('purchaseOrder', function ($q) use ($businessId) {
+                $q->where('business_id', $businessId)
+                    ->where('is_deleted', false);
+            })
+            ->orderByDesc('created_at')
+            ->get();
+
+        $isSerializedProduct = (bool) ($product->is_serialized ?? false);
+
+        $purchases = collect();
+        foreach ($poItems as $item) {
+            $po = $item->purchaseOrder;
+            $supplier = optional($po)->supplier;
+            $supplierName = optional($supplier)->supplier_name ?: 'Walk-in / Direct';
+            $qty = (int) ($item->quantity ?? 0);
+            $received = (int) ($item->received_quantity ?? $qty);
+            $supplierPayload = $supplier ? [
+                'id' => $supplier->id,
+                'supplier_name' => $supplier->supplier_name,
+                'full_name' => $supplier->full_name,
+                'phone' => $supplier->phone,
+                'email' => $supplier->email,
+                'balance' => $supplier->balance,
+                'address' => $supplier->address,
+            ] : null;
+
+            $rawSerial = trim((string) ($item->imei_serial_no ?? ''));
+            $serialList = $isSerializedProduct && $rawSerial !== ''
+                ? array_values(array_filter(array_map('trim', explode(',', $rawSerial))))
+                : [$rawSerial];
+            if (empty($serialList)) {
+                $serialList = [''];
+            }
+
+            foreach ($serialList as $sIdx => $serialVal) {
+                $purchases->push([
+                    'id' => count($serialList) > 1 ? "{$item->id}_{$sIdx}" : $item->id,
+                    'purchase_order_id' => $item->purchase_order_id,
+                    'order_no' => optional($po)->order_no ?: '—',
+                    'supplier_name' => $supplierName,
+                    'supplier' => $supplierPayload,
+                    'quantity' => $qty,
+                    'available_qty' => $received > 0 ? $received : $qty,
+                    'unit_price' => (float) ($item->unit_cost ?? 0),
+                    'pack_price' => (float) ($item->pack_price ?? $item->unit_cost ?? 0),
+                    'description' => $item->description ?: 'N/A',
+                    'imei_serial_no' => $serialVal,
+                    'status' => ($received > 0 || $qty > 0) ? 'AVAILABLE' : 'UNAVAILABLE',
+                    'created_at' => $item->created_at ? $item->created_at->toIso8601String() : null,
+                ]);
+            }
+        }
+        $purchases = $purchases->values();
+
+        $specs = is_array($product->specs ?? null)
+            ? $product->specs
+            : (is_string($product->specs ?? null) ? (json_decode($product->specs, true) ?: []) : []);
+        $adjustments = is_array($specs['stock_adjustments'] ?? null) ? array_reverse($specs['stock_adjustments']) : [];
+
+        return response()->json([
+            'status' => true,
+            'data' => [
+                'is_serialized' => $isSerializedProduct,
+                'reserved_stock' => (int) ($product->stock_quantity ?? 0),
+                'purchases' => $purchases,
+                'sales' => [],
+                'adjustments' => $adjustments,
+                'returns' => [],
+            ],
+        ], 200);
+    }
+
+    public function adjustPosProductStock(Request $request)
+    {
+        $businessId = auth()->id();
+        $validator = Validator::make($request->all(), [
+            'id' => 'required|uuid',
+            'quantity_delta' => 'required|integer|not_in:0',
+            'reason' => 'nullable|string|max:255',
+            'order_no' => 'nullable|string|max:100',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => false,
+                'message' => $validator->errors()->first(),
+            ], 422);
+        }
+
+        $product = Product::where('business_id', $businessId)
+            ->where('is_deleted', false)
+            ->find($request->input('id'));
+
+        if (!$product) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Product not found.',
+            ], 404);
+        }
+
+        $delta = (int) $request->input('quantity_delta');
+        $oldQty = (int) ($product->stock_quantity ?? 0);
+        $newQty = max(0, $oldQty + $delta);
+        $product->stock_quantity = $newQty;
+        $product->product_status_stock = $newQty > 0;
+
+        if (\Illuminate\Support\Facades\Schema::hasColumn('products', 'specs')) {
+            $specs = is_array($product->specs ?? null)
+                ? $product->specs
+                : (is_string($product->specs ?? null) ? (json_decode($product->specs, true) ?: []) : []);
+            $history = is_array($specs['stock_adjustments'] ?? null) ? $specs['stock_adjustments'] : [];
+            $history[] = [
+                'id' => (string) Str::uuid(),
+                'order_no' => $request->input('order_no') ?: 'Manual',
+                'previous_qty' => $oldQty,
+                'delta' => $delta,
+                'new_qty' => $newQty,
+                'reason' => trim((string) $request->input('reason', 'Stock adjustment')),
+                'created_at' => now()->toIso8601String(),
+            ];
+            $specs['stock_adjustments'] = $history;
+            $product->specs = $specs;
+        }
+
+        $product->save();
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Stock adjusted successfully!',
+            'data' => ['stock_quantity' => $newQty],
+        ], 200);
+    }
+
+    public function updatePosBarcode(Request $request)
+    {
+        $businessId = auth()->id();
+        $validator = Validator::make($request->all(), [
+            'id' => 'required|uuid',
+            'product_sku' => 'required|string|max:120',
+            'is_default' => 'nullable|boolean',
+            'edit_barcode_id' => 'nullable|string|max:100',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => false,
+                'message' => $validator->errors()->first(),
+            ], 422);
+        }
+
+        $product = Product::where('business_id', $businessId)
+            ->where('is_deleted', false)
+            ->find($request->input('id'));
+
+        if (!$product) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Product not found.',
+            ], 404);
+        }
+
+        $sku = trim((string) $request->input('product_sku'));
+        $duplicate = Product::where('business_id', $businessId)
+            ->where('is_deleted', false)
+            ->where('id', '!=', $product->id)
+            ->where('product_sku', $sku)
+            ->exists();
+
+        if ($duplicate) {
+            return response()->json([
+                'status' => false,
+                'message' => 'This barcode / SKU already exists on another product.',
+            ], 422);
+        }
+
+        $specs = is_array($product->specs ?? null)
+            ? $product->specs
+            : (is_string($product->specs ?? null) ? (json_decode($product->specs, true) ?: []) : []);
+        $barcodes = $this->formatProductBarcodes($product);
+        $editId = $request->input('edit_barcode_id');
+        $wasTargetDefault = false;
+        if ($editId) {
+            foreach ($barcodes as $b) {
+                if ((string) ($b['id'] ?? '') === (string) $editId && !empty($b['is_default'])) {
+                    $wasTargetDefault = true;
+                    break;
+                }
+            }
+        }
+        $isDefault = $request->boolean('is_default', false) || empty($barcodes) || $wasTargetDefault;
+
+        // Prevent duplicate barcode within the same product (unless editing that exact entry)
+        foreach ($barcodes as $b) {
+            if (strtolower((string) ($b['barcode'] ?? '')) === strtolower($sku) && (string) ($b['id'] ?? '') !== (string) $editId) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'This barcode already exists for this product.',
+                ], 422);
+            }
+        }
+
+        if ($isDefault) {
+            foreach ($barcodes as &$b) {
+                $b['is_default'] = false;
+            }
+            unset($b);
+        }
+
+        $nowFormatted = now()->toIso8601String();
+        if ($editId) {
+            $updated = false;
+            foreach ($barcodes as &$b) {
+                if ((string) ($b['id'] ?? '') === (string) $editId) {
+                    $b['barcode'] = $sku;
+                    $b['is_default'] = $isDefault;
+                    $b['created_at'] = $nowFormatted;
+                    $updated = true;
+                    break;
+                }
+            }
+            unset($b);
+            if (!$updated) {
+                $barcodes[] = [
+                    'id' => (string) Str::uuid(),
+                    'barcode' => $sku,
+                    'is_default' => $isDefault,
+                    'created_at' => $nowFormatted,
+                ];
+            }
+        } else {
+            $barcodes[] = [
+                'id' => (string) Str::uuid(),
+                'barcode' => $sku,
+                'is_default' => $isDefault,
+                'created_at' => $nowFormatted,
+            ];
+        }
+
+        $specs['barcodes'] = array_values($barcodes);
+        $updateData = ['specs' => $specs];
+        if ($isDefault) {
+            $updateData['product_sku'] = $sku;
+        }
+        $product->update($updateData);
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Barcode saved successfully!',
+            'data' => $product->fresh(),
+            'barcodes' => $specs['barcodes'],
+        ]);
+    }
+
+    public function deletePosBarcode(Request $request)
+    {
+        $businessId = auth()->id();
+        $validator = Validator::make($request->all(), [
+            'id' => 'required|uuid',
+            'barcode_id' => 'required|string|max:100',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => false,
+                'message' => $validator->errors()->first(),
+            ], 422);
+        }
+
+        $product = Product::where('business_id', $businessId)
+            ->where('is_deleted', false)
+            ->find($request->input('id'));
+
+        if (!$product) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Product not found.',
+            ], 404);
+        }
+
+        $specs = is_array($product->specs ?? null)
+            ? $product->specs
+            : (is_string($product->specs ?? null) ? (json_decode($product->specs, true) ?: []) : []);
+        $barcodes = $this->formatProductBarcodes($product);
+        $barcodeId = (string) $request->input('barcode_id');
+
+        $target = collect($barcodes)->first(fn($b) => (string) ($b['id'] ?? '') === $barcodeId);
+        if ($target && !empty($target['is_default'])) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Cannot delete the default barcode.',
+            ], 422);
+        }
+
+        $remaining = array_values(array_filter(
+            $barcodes,
+            fn($b) => (string) ($b['id'] ?? '') !== $barcodeId
+        ));
+        $specs['barcodes'] = $remaining;
+        $product->update(['specs' => $specs]);
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Barcode deleted successfully!',
+            'barcodes' => $remaining,
+        ]);
     }
 }
 
